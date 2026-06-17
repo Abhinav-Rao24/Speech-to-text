@@ -1,0 +1,6 @@
+sounddevice
+numpy
+scipy
+torch
+faster-whisper
+jiwer
