@@ -13,8 +13,8 @@ def transcribe_local(audio_path: str):
     Auto-detects language (English, Hindi, or Telugu) and measures execution time.
     """
     print(f"Loading faster-whisper model ({WHISPER_MODEL_SIZE})...")
-    # Initialize model - device auto-detection
-    model = WhisperModel(WHISPER_MODEL_SIZE, device="auto", compute_type="default")
+    # Initialize model - forcing CPU and int8 to prevent missing CUDA DLL errors
+    model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
     
     print(f"Transcribing {audio_path}...")
     start_time = time.time()
