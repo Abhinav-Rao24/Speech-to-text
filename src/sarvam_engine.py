@@ -22,15 +22,34 @@ def transcribe_sarvam(audio_path: str):
     # Configure the payload to use the saaras:v3 model with the mode set to transcribe or codemix
     data = {
         "model": "saaras:v3",
-        "mode": "code-mix" # Using codemix mode for Indian accents and code-mixed speech
+        "mode": "codemix" # Using codemix mode for Indian accents and code-mixed speech
     }
     
     start_time = time.time()
     
     try:
+        import mimetypes
+        
+        filename = os.path.basename(audio_path)
+        mime_type, _ = mimetypes.guess_type(audio_path)
+        
+        # Explicit fallback map for common extensions if mimetypes fails on Windows
+        if not mime_type:
+            ext = os.path.splitext(audio_path)[1].lower()
+            mime_map = {
+                '.wav': 'audio/wav',
+                '.mp3': 'audio/mpeg',
+                '.mpeg': 'audio/mpeg',
+                '.ogg': 'audio/ogg',
+                '.webm': 'audio/webm',
+                '.m4a': 'audio/x-m4a',
+                '.mp4': 'audio/mp4'
+            }
+            mime_type = mime_map.get(ext, 'application/octet-stream')
+            
         with open(audio_path, "rb") as audio_file:
             files = {
-                "file": audio_file
+                "file": (filename, audio_file, mime_type)
             }
             response = requests.post(url, headers=headers, data=data, files=files)
             response.raise_for_status()
