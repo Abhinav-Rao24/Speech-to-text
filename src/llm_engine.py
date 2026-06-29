@@ -8,11 +8,11 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import config
 
 PROMPT_LIBRARY = {
-    "tracking": "The user wants to track their shipments. Scan the immediate short-term history window. If they have mentioned multiple products in this active session (e.g., watch_101 and laptop_101), summarize and provide mock locations/ETAs for BOTH items at the same time in a single response, rather than making them ask individually.",
-    "pickup": "The user wants to schedule a pickup. Ask for the item description. When acknowledging the items, assign them simple, memorable human-readable shipment IDs combining the item name with a sequential number matching the session's numeric part (e.g., if session is abhinav_101 and they are shipping a watch, name the shipment ID 'watch_101').",
-    "delays": "The user is asking about delays. Express professional empathy, look at the active session products, and explain transit delays affecting their specific custom item IDs.",
-    "faq": "General logistics FAQs. Delivery takes 2-3 business days. Operating hours are 24/7.",
-    "unknown": "The user request is ambiguous, invalid, or off-topic (e.g., gibberish, jokes). Politely redirect them to logistics support."
+    "tracking": "tracking: If the user asks about the status or location of their items, scan the short-term history window. Summarize and provide updates for all active products mentioned in this session (e.g., watch_101 and laptop_101) simultaneously in a single, grouped response.",
+    "pickup": "pickup / order placement: You must actively gather three specific parameters before confirming a shipment: 1) Product Type, 2) Delivery Address, and 3) Expected Timeline. Scan the active session's short-term history window. If any of these are missing, do not confirm the order; politely prompt for the missing details. Once all 3 are gathered, assign a human-readable ID (e.g., watch_101) and explicitly state: 'CONFIRMED: Booking shipment for [Product] to [Address] with an expected timeline of [Timeline]. Tracking handle is [ID].'",
+    "delays": "delays: If the user asks about a delayed item, express professional empathy, provide a realistic operational reason (like severe weather or sorting hub congestion), and offer an updated delivery buffer of exactly '24 to 48 hours'.",
+    "faq": "faq: General logistics FAQs. Delivery takes 2-3 business days. Operating hours are 24/7.",
+    "unknown": "unknown / off-topic: If the query is ambiguous, gibberish, or a joke, politely pivot back to logistics support."
 }
 
 def fetch_short_term_memory(session_id: str, db_path: str, limit: int = 10) -> list:
@@ -47,7 +47,7 @@ def generate_llm_response(session_id: str, transcript: str, db_path: str) -> str
         api_key=config.OPENROUTER_API_KEY
     )
     
-    base_prompt = "You are a logistics support assistant for Saaras Logistics. Provide clear, professional, short responses. Keep answers under 4 sentences. Do not provide information unrelated to logistics."
+    base_prompt = "You are an automated Customer Support Assistant for Saaras Logistics. Keep responses clear, professional, and strictly under 3 sentences. You are bilingual: if the user queries in Telugu, reply in clean, professional Telugu; if English, reply in English."
     
     # Simple Intent Routing
     lower_t = transcript.lower()
@@ -63,17 +63,19 @@ def generate_llm_response(session_id: str, transcript: str, db_path: str) -> str
         
     system_prompt = base_prompt + " " + PROMPT_LIBRARY[scenario]
     
-    messages = [{"role": "system", "content": system_prompt}]
-    
     short_term_memory = fetch_short_term_memory(session_id, db_path)
-    messages.extend(short_term_memory)
     
-    messages.append({"role": "user", "content": transcript})
+    messages = (
+        [{"role": "system", "content": system_prompt}] +
+        short_term_memory +
+        [{"role": "user", "content": transcript}]
+    )
     
     try:
         response = client.chat.completions.create(
             model=config.LLM_MODEL,
             messages=messages,
+            max_tokens=500,
         )
         content = response.choices[0].message.content
         if not content or not content.strip():

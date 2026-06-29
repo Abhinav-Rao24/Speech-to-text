@@ -212,13 +212,15 @@ def main():
                 if not transcript:
                     continue
 
-                lower_t = transcript.lower()
-                if "/switch" in lower_t or "/exit" in lower_t:
+                lower_t = transcript.lower().strip()
+                exit_commands = ["that's it", "that is it", "exit", "stop", "/switch", "/exit"]
+                if any(cmd in lower_t for cmd in exit_commands):
+                    print("\nGracefully exiting voice session. Goodbye!\n")
                     break
 
-                print(f"User: {transcript}")
+                print(f"\n\033[92mUser: {transcript}\033[0m")
                 ai_response = generate_llm_response(session_id, transcript, DB_PATH)
-                print(f"Assistant: {ai_response}")
+                print(f"\033[96mAssistant: {ai_response}\033[0m\n")
                 log_interaction(session_id, transcript, ai_response)
                 
                 # If reading from a static file, we don't want an infinite loop
