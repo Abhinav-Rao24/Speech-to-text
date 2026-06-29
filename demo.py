@@ -39,7 +39,9 @@ for p in (ROOT, SRC):
         sys.path.insert(0, p)
 
 from config import STT_PROVIDER          # noqa: E402
-from src.eval_logger import log_transcription, print_recent_logs  # noqa: E402
+from src.eval_logger import log_transcription, print_recent_logs, get_next_sequential_session_id, DB_PATH  # noqa: E402
+from src.llm_engine import generate_llm_response # noqa: E402
+import sqlite3
 
 
 # ---------------------------------------------------------------------------
@@ -92,17 +94,18 @@ def _print_result_block(result: dict, engine: str, ref: str = None):
 # Core pipeline
 # ---------------------------------------------------------------------------
 
-def run_pipeline(engine: str, audio_path: str = None, reference: str = None):
-    """
-    Full pipeline:
-      1. Record audio (or use a provided file).
-      2. Transcribe with the active engine.
-      3. Log to SQLite.
-      4. Print result comparison block.
-    """
-    _print_banner(engine)
+def log_interaction(session_id, user_text, ai_response):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO transcripts (session_id, user_text, ai_response, latency_ms) VALUES (?, ?, ?, ?)",
+        (session_id, user_text, ai_response, 0)
+    )
+    conn.commit()
+    conn.close()
 
-    # ── Step 1: Audio acquisition ──────────────────────────────────────────
+def acquire_and_transcribe(engine: str, audio_path: str = None, reference: str = None):
+    # Step 1: Audio acquisition
     if audio_path:
         wav_path = audio_path
         print(f"[demo] Using provided audio file: {wav_path}")
@@ -112,42 +115,35 @@ def run_pipeline(engine: str, audio_path: str = None, reference: str = None):
         wav_path = record_audio(output_filename=os.path.join(ROOT, "output.wav"))
         if not wav_path:
             print("[demo] No audio captured. Exiting.")
-            return
+            return None
 
-    # ── Step 2: Transcription ──────────────────────────────────────────────
+    # Step 2: Transcription
     result = None
-
     if engine == "local":
         from src.stt_engine import transcribe_local
         result = transcribe_local(wav_path)
-
     elif engine == "sarvam":
         from src.sarvam_engine import transcribe_sarvam
         result = transcribe_sarvam(wav_path)
-
     else:
-        print(f"[demo] Unknown engine '{engine}'. Set STT_PROVIDER in config.py to 'local' or 'sarvam'.")
-        return
+        print(f"[demo] Unknown engine '{engine}'.")
+        return None
 
     if result is None:
         print("[demo] Transcription returned no result.")
-        return
+        return None
 
     result["_filename"] = wav_path
 
-    # ── Step 3: Log to SQLite ──────────────────────────────────────────────
-    row_id = log_transcription(
+    # Step 3: Log to SQLite (legacy STT logs)
+    log_transcription(
         filename=wav_path,
         engine_provider=engine,
         raw_text=result.get("text", ""),
         duration_seconds=result.get("execution_time", 0.0),
         reference_text=reference,
     )
-    print(f"\n[demo] ✔ Result logged to transcripts.db (row id={row_id})")
-
-    # ── Step 4: Print result block ─────────────────────────────────────────
-    _print_result_block(result, engine, reference)
-
+    return result
 
 # ---------------------------------------------------------------------------
 # Entry point
@@ -192,12 +188,51 @@ def main():
         print_recent_logs(limit=args.logs)
         return
 
-    run_pipeline(
-        engine=args.engine,
-        audio_path=args.audio,
-        reference=args.reference,
-    )
+    _print_banner(args.engine)
 
+    while True:
+        try:
+            user_input = input("Enter User ID or type 'new': ").strip()
+            if not user_input:
+                continue
+            if user_input.lower() == 'new':
+                user_name = input("Enter your name: ").strip()
+                session_id = get_next_sequential_session_id(user_name, DB_PATH)
+                print(f"Registration complete! Active Session: {session_id}")
+            else:
+                session_id = user_input
+                print("Session rehydrated.")
+
+            while True:
+                result = acquire_and_transcribe(args.engine, args.audio, args.reference)
+                if not result:
+                    break
+                
+                transcript = result.get("text", "").strip()
+                if not transcript:
+                    continue
+
+                lower_t = transcript.lower()
+                if "/switch" in lower_t or "/exit" in lower_t:
+                    break
+
+                print(f"User: {transcript}")
+                ai_response = generate_llm_response(session_id, transcript, DB_PATH)
+                print(f"Assistant: {ai_response}")
+                log_interaction(session_id, transcript, ai_response)
+                
+                # If reading from a static file, we don't want an infinite loop
+                if args.audio:
+                    break
+                    
+            if args.audio:
+                break
+                
+        except KeyboardInterrupt:
+            print("\nExiting...")
+            break
+        except EOFError:
+            break
 
 if __name__ == "__main__":
     main()
