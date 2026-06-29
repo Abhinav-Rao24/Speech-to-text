@@ -15,15 +15,17 @@ PROMPT_LIBRARY = {
     "unknown": "unknown / off-topic: If the query is ambiguous, gibberish, or a joke, politely pivot back to logistics support."
 }
 
-def fetch_short_term_memory(session_id: str, db_path: str, limit: int = 10) -> list:
+def fetch_short_term_memory(session_id: str, db_path: str, limit: int = 50) -> list:
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute(
         """
-        SELECT user_text, ai_response FROM transcripts
-        WHERE session_id = ?
-        ORDER BY timestamp DESC, id DESC
-        LIMIT ?
+        SELECT user_text, ai_response FROM (
+            SELECT id, user_text, ai_response FROM transcripts
+            WHERE session_id = ?
+            ORDER BY id DESC
+            LIMIT ?
+        ) ORDER BY id ASC
         """,
         (session_id, limit)
     )
@@ -31,13 +33,12 @@ def fetch_short_term_memory(session_id: str, db_path: str, limit: int = 10) -> l
     conn.close()
 
     messages = []
-    # reverse to chronological
-    for row in reversed(rows):
+    for row in rows:
         user_text, ai_response = row
         if user_text:
-            messages.append({"role": "user", "content": user_text})
+            messages.append({"role": "user", "content": str(user_text)})
         if ai_response:
-            messages.append({"role": "assistant", "content": ai_response})
+            messages.append({"role": "assistant", "content": str(ai_response)})
             
     return messages
 
@@ -47,7 +48,7 @@ def generate_llm_response(session_id: str, transcript: str, db_path: str) -> str
         api_key=config.OPENROUTER_API_KEY
     )
     
-    base_prompt = "You are an automated Customer Support Assistant for Saaras Logistics. Keep responses clear, professional, and strictly under 3 sentences. You are bilingual: if the user queries in Telugu, reply in clean, professional Telugu; if English, reply in English."
+    base_prompt = "You are an automated Customer Support Assistant for Colaberry. Keep responses clear, professional, and strictly under 3 sentences. You are bilingual: if the user queries in Telugu, reply in clean, professional Telugu; if English, reply in English."
     
     # Simple Intent Routing
     lower_t = transcript.lower()
