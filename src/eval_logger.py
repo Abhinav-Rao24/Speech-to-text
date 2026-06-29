@@ -27,6 +27,16 @@ def init_db():
             wer_score        REAL
         )
     """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS transcripts (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            user_text TEXT,
+            ai_response TEXT,
+            latency_ms INTEGER
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -122,6 +132,32 @@ def print_recent_logs(limit: int = 10):
         print(f"  WER       : {wer_display}")
         print(f"  Transcript: {(row['raw_text'] or '').strip()[:120]}")
     print(separator)
+
+
+def get_next_sequential_session_id(user_name: str, db_path: str) -> str:
+    """
+    Finds the highest session ID for a given user and returns the next one.
+    """
+    conn = sqlite3.connect(db_path)
+    cursor = conn.cursor()
+    prefix = f"{user_name}_"
+    cursor.execute(
+        "SELECT session_id FROM transcripts WHERE session_id LIKE ?", 
+        (f"{prefix}%",)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+
+    max_num = 100
+    for row in rows:
+        session_id = row[0]
+        suffix = session_id[len(prefix):]
+        if suffix.isdigit():
+            num = int(suffix)
+            if num > max_num:
+                max_num = num
+
+    return f"{user_name}_{max_num + 1}"
 
 
 # Initialise DB on import so callers never have to worry about it.

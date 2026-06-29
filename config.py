@@ -15,3 +15,8 @@ WHISPER_MODEL_SIZE = 'base'
 # STT Provider Options
 STT_PROVIDER = "local" # Options: "local" or "sarvam"
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
+
+# OpenRouter configuration
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+LLM_MODEL = "google/gemini-2.5-flash"
