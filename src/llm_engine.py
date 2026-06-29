@@ -64,13 +64,9 @@ def generate_llm_response(session_id: str, transcript: str, db_path: str) -> str
         
     system_prompt = base_prompt + " " + PROMPT_LIBRARY[scenario]
     
-    short_term_memory = fetch_short_term_memory(session_id, db_path)
-    
-    messages = (
-        [{"role": "system", "content": system_prompt}] +
-        short_term_memory +
-        [{"role": "user", "content": transcript}]
-    )
+    history = fetch_short_term_memory(session_id, db_path)
+    print(f"\n[DEBUG] Context Check: Sending {len(history)} past messages for session '{session_id}' to OpenRouter.\n")
+    messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": transcript}]
     
     try:
         response = client.chat.completions.create(
