@@ -13,7 +13,7 @@ SILENCE_TIMEOUT_THRESHOLD = 1.5  # in seconds
 WHISPER_MODEL_SIZE = 'base'
 
 # STT Provider Options
-STT_PROVIDER = "local" # Options: "local" or "sarvam"
+STT_PROVIDER = "sarvam" # Options: "local" or "sarvam"
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 
 # OpenRouter configuration
