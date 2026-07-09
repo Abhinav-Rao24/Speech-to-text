@@ -16,6 +16,11 @@ WHISPER_MODEL_SIZE = 'base'
 STT_PROVIDER = "sarvam" # Options: "local" or "sarvam"
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 
+# TTS Provider Options
+TTS_PROVIDER = "sarvam" # Options: "sarvam", "elevenlabs", "google"
+ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
+GOOGLE_APPLICATION_CREDENTIALS = os.getenv("GOOGLE_APPLICATION_CREDENTIALS")
+
 # OpenRouter configuration
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"

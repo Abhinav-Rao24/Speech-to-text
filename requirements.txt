@@ -7,3 +7,5 @@ faster-whisper
 jiwer
 requests
 python-dotenv
+elevenlabs
+google-cloud-texttospeech
