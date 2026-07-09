@@ -41,7 +41,12 @@ for p in (ROOT, SRC):
 from config import STT_PROVIDER          # noqa: E402
 from src.eval_logger import log_transcription, print_recent_logs, get_next_sequential_session_id, DB_PATH  # noqa: E402
 from src.llm_engine import generate_llm_response # noqa: E402
+from src.tts_engine import generate_voice_output  # noqa: E402
 import sqlite3
+import pygame
+
+# Initialize pygame mixer at startup
+pygame.mixer.init()
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +226,37 @@ def main():
                 print(f"\n\033[92mUser: {transcript}\033[0m")
                 ai_response = generate_llm_response(session_id, transcript, DB_PATH)
                 print(f"\033[96mAssistant: {ai_response}\033[0m\n")
+                
+                # Active conversational language code tracking with fallback mappings
+                raw_lang = result.get("language", "en-IN")
+                lang_mapping = {
+                    "te": "te-IN",
+                    "hi": "hi-IN",
+                    "en": "en-IN"
+                }
+                language_code = lang_mapping.get(raw_lang, raw_lang)
+                if not language_code or language_code == "Unknown":
+                    language_code = "en-IN"
+                    
+                # Call voice generation
+                audio_path = generate_voice_output(ai_response, language_code)
+                if audio_path and os.path.exists(audio_path):
+                    try:
+                        pygame.mixer.music.load(audio_path)
+                        pygame.mixer.music.play()
+                        # Strict non-overlapping playback lock
+                        while pygame.mixer.music.get_busy():
+                            pygame.time.Clock().tick(10)
+                        pygame.mixer.music.unload()
+                    except Exception as e:
+                        print(f"[demo] Audio playback failed: {e}")
+                    finally:
+                        try:
+                            if os.path.exists(audio_path):
+                                os.remove(audio_path)
+                        except Exception as e:
+                            print(f"[demo] Failed to delete temporary audio file: {e}")
+                            
                 log_interaction(session_id, transcript, ai_response)
                 
                 # If reading from a static file, we don't want an infinite loop
