@@ -122,6 +122,49 @@ def _call_google_tts(text: str) -> str:
         
     return os.path.abspath(file_path)
 
+import re
+
+def normalize_logistics_text(text: str) -> str:
+    """
+    Sanitize text strings before sending them to a TTS provider API.
+    Replaces complex alpha-numeric formatting strings with explicit, phonetically conversational phrases.
+    """
+    if not text:
+        return text
+
+    digit_words = {
+        '0': 'zero', '1': 'one', '2': 'two', '3': 'three', '4': 'four',
+        '5': 'five', '6': 'six', '7': 'seven', '8': 'eight', '9': 'nine'
+    }
+
+    # 1. Expand tracking codes or strings containing underscores like "watch_101" to "watch, one, zero, one"
+    def expand_underscore(match):
+        prefix = match.group(1)
+        digits = match.group(2)
+        digit_names = ", ".join(digit_words[d] for d in digits)
+        return f"{prefix}, {digit_names}"
+
+    text = re.sub(r'\b([A-Za-z]+)_(\d+)\b', expand_underscore, text)
+
+    # 2. Expand alphanumeric identifiers like "SH12345" to spelled-out letters and numbers: "S, H, 1, 2, 3, 4, 5"
+    def expand_alphanumeric(match):
+        code = match.group(0)
+        parts = []
+        for char in code:
+            if char.isalpha():
+                parts.append(char.upper())
+            elif char.isdigit():
+                parts.append(char)
+        return ", ".join(parts)
+
+    # Matches words containing both letters and digits, e.g., SH12345, WB98765
+    text = re.sub(r'\b(?=[A-Za-z]*\d)(?=[\d]*[A-Za-z])[A-Za-z\d]+\b', expand_alphanumeric, text)
+
+    # 3. Replace "ID" with "I.D"
+    text = re.sub(r'\bID\b', 'I.D', text, flags=re.IGNORECASE)
+
+    return text
+
 def generate_voice_output(text: str, language_code: str = "en-IN") -> str:
     """
     Primary unified factory function to generate voice output from text.
@@ -131,16 +174,19 @@ def generate_voice_output(text: str, language_code: str = "en-IN") -> str:
     provider = getattr(config, "TTS_PROVIDER", "sarvam").lower()
     print(f"Generating voice output using TTS provider: '{provider}'")
     
+    # Apply text normalization layer
+    normalized_text = normalize_logistics_text(text)
+    
     try:
         if provider == "sarvam":
-            return _call_sarvam_tts(text, language_code)
+            return _call_sarvam_tts(normalized_text, language_code)
         elif provider == "elevenlabs":
-            return _call_elevenlabs_tts(text)
+            return _call_elevenlabs_tts(normalized_text)
         elif provider == "google":
-            return _call_google_tts(text)
+            return _call_google_tts(normalized_text)
         else:
             print(f"Unknown TTS provider: '{provider}'. Defaulting to 'sarvam'.")
-            return _call_sarvam_tts(text, language_code)
+            return _call_sarvam_tts(normalized_text, language_code)
     except Exception as e:
-        print(f"Error during TTS generation with provider '{provider}': {e}", file=sys.stderr)
+        print(f"[WARNING] TTS Provider failed or timed out. Transitioning to text-only communication fallback. Error: {e}", file=sys.stderr)
         return None

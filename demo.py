@@ -301,7 +301,11 @@ def main():
                 try:
                     for idx, sentence in enumerate(sentences):
                         audio_path = prefetcher.get_path(idx)
-                        if audio_path and os.path.exists(audio_path):
+                        if audio_path is None:
+                            print(f"[demo] Skipping audio playback for sentence {idx+1} (TTS generation returned None).")
+                            continue
+                            
+                        if os.path.exists(audio_path):
                             try:
                                 pygame.mixer.music.load(audio_path)
                                 pygame.mixer.music.play()
