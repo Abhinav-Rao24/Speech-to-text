@@ -223,10 +223,6 @@ def main():
                     print("\nGracefully exiting voice session. Goodbye!\n")
                     break
 
-                print(f"\n\033[92mUser: {transcript}\033[0m")
-                ai_response = generate_llm_response(session_id, transcript, DB_PATH)
-                print(f"\033[96mAssistant: {ai_response}\033[0m\n")
-                
                 # Active conversational language code tracking with fallback mappings
                 raw_lang = result.get("language", "en-IN")
                 lang_mapping = {
@@ -237,9 +233,32 @@ def main():
                 language_code = lang_mapping.get(raw_lang, raw_lang)
                 if not language_code or language_code == "Unknown":
                     language_code = "en-IN"
+
+                # Define the system instruction modifier based on the active language_code
+                if language_code == "hi-IN":
+                    system_modifier = "Respond naturally in colloquial Hinglish (Hindi mixed with English words, written strictly using the Latin script/English alphabet). Keep it short and conversational."
+                elif language_code == "te-IN":
+                    system_modifier = "Respond naturally in conversational Telugu-English code-switched phrases written strictly using the Latin script/English alphabet. Keep it short and conversational."
+                else:
+                    system_modifier = "Respond in crisp, clear logistics English."
+
+                print(f"\n\033[92mUser: {transcript}\033[0m")
+                ai_response = generate_llm_response(session_id, transcript, DB_PATH, system_modifier=system_modifier)
+                print(f"\033[96mAssistant: {ai_response}\033[0m\n")
+                
+                # Sentence-slicing latency optimization: isolate the FIRST complete sentence
+                import re
+                sentence_match = re.search(r'[.!?]', ai_response)
+                if sentence_match:
+                    voice_text = ai_response[:sentence_match.end()].strip()
+                else:
+                    voice_text = ai_response.strip()
+
+                if not voice_text:
+                    voice_text = ai_response
                     
-                # Call voice generation
-                audio_path = generate_voice_output(ai_response, language_code)
+                # Call voice generation on only the first sentence
+                audio_path = generate_voice_output(voice_text, language_code)
                 if audio_path and os.path.exists(audio_path):
                     try:
                         pygame.mixer.music.load(audio_path)

@@ -42,7 +42,7 @@ def fetch_short_term_memory(session_id: str, db_path: str, limit: int = 50) -> l
             
     return messages
 
-def generate_llm_response(session_id: str, transcript: str, db_path: str) -> str:
+def generate_llm_response(session_id: str, transcript: str, db_path: str, system_modifier: str = None) -> str:
     client = OpenAI(
         base_url=config.OPENROUTER_BASE_URL,
         api_key=config.OPENROUTER_API_KEY
@@ -63,6 +63,8 @@ def generate_llm_response(session_id: str, transcript: str, db_path: str) -> str
         scenario = "faq"
         
     system_prompt = base_prompt + " " + PROMPT_LIBRARY[scenario]
+    if system_modifier:
+        system_prompt += " " + system_modifier
     
     history = fetch_short_term_memory(session_id, db_path)
     print(f"\n[DEBUG] Context Check: Sending {len(history)} past messages for session '{session_id}' to OpenRouter.\n")
