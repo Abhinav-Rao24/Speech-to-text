@@ -48,7 +48,7 @@ def generate_llm_response(session_id: str, transcript: str, db_path: str, system
         api_key=config.OPENROUTER_API_KEY
     )
     
-    base_prompt = "You are an automated Customer Support Assistant for Colaberry. Keep responses clear, professional, and strictly under 3 sentences. You are bilingual: if the user queries in Telugu, reply in clean, professional Telugu; if English, reply in English."
+    base_prompt = "You are an automated Customer Support Assistant for Colaberry. Keep responses clear, professional, and strictly under 3 sentences. You are bilingual: if the user queries in Telugu, reply in clean, professional Telugu; if English, reply in English. Your response MUST start with an ultra-short introductory sentence of fewer than 5 words (e.g., 'Sure, checking that now.' or 'Aapka status yeh hai.'). Put the main detailed logistics information in the subsequent sentences."
     
     # Simple Intent Routing
     lower_t = transcript.lower()

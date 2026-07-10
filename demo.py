@@ -48,6 +48,47 @@ import pygame
 # Initialize pygame mixer at startup
 pygame.mixer.init()
 
+import threading
+import time
+
+class AudioPrefetcher:
+    """
+    A thread-safe audio prefetcher that fetches TTS audio files for a list of sentences
+    in a background thread, caching their local absolute paths so they can be played back
+    with minimum latency.
+    """
+    def __init__(self, sentences, language_code):
+        self.sentences = sentences
+        self.language_code = language_code
+        self.audio_paths = {}  # index -> path
+        self.lock = threading.Lock()
+        self.stopped = False
+        self.thread = threading.Thread(target=self._fetch_loop, daemon=True)
+        
+    def start(self):
+        self.thread.start()
+        
+    def stop(self):
+        self.stopped = True
+        
+    def _fetch_loop(self):
+        for idx, sentence in enumerate(self.sentences):
+            if self.stopped:
+                break
+            # Call TTS generation
+            path = generate_voice_output(sentence, self.language_code)
+            with self.lock:
+                self.audio_paths[idx] = path
+                
+    def get_path(self, idx):
+        # Poll/wait until the audio path for idx is available, or return None if stopped
+        while not self.stopped:
+            with self.lock:
+                if idx in self.audio_paths:
+                    return self.audio_paths[idx]
+            time.sleep(0.05)
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -235,46 +276,50 @@ def main():
                     language_code = "en-IN"
 
                 # Define the system instruction modifier based on the active language_code
+                brevity_instruction = " Your response MUST start with an ultra-short introductory sentence of fewer than 5 words (e.g., 'Sure, checking that now.' or 'Aapka status yeh hai.'). Put the main detailed logistics information in the subsequent sentences."
                 if language_code == "hi-IN":
-                    system_modifier = "Respond naturally in colloquial Hinglish (Hindi mixed with English words, written strictly using the Latin script/English alphabet). Keep it short and conversational."
+                    system_modifier = "Respond naturally in colloquial Hinglish (Hindi mixed with English words, written strictly using the Latin script/English alphabet). Keep it short and conversational." + brevity_instruction
                 elif language_code == "te-IN":
-                    system_modifier = "Respond naturally in conversational Telugu-English code-switched phrases written strictly using the Latin script/English alphabet. Keep it short and conversational."
+                    system_modifier = "Respond naturally in conversational Telugu-English code-switched phrases written strictly using the Latin script/English alphabet. Keep it short and conversational." + brevity_instruction
                 else:
-                    system_modifier = "Respond in crisp, clear logistics English."
+                    system_modifier = "Respond in crisp, clear logistics English." + brevity_instruction
 
                 print(f"\n\033[92mUser: {transcript}\033[0m")
                 ai_response = generate_llm_response(session_id, transcript, DB_PATH, system_modifier=system_modifier)
                 print(f"\033[96mAssistant: {ai_response}\033[0m\n")
                 
-                # Sentence-slicing latency optimization: isolate the FIRST complete sentence
+                # Split the full response into clean sentences using regex
                 import re
-                sentence_match = re.search(r'[.!?]', ai_response)
-                if sentence_match:
-                    voice_text = ai_response[:sentence_match.end()].strip()
-                else:
-                    voice_text = ai_response.strip()
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', ai_response) if s.strip()]
+                if not sentences:
+                    sentences = [ai_response.strip()]
 
-                if not voice_text:
-                    voice_text = ai_response
-                    
-                # Call voice generation on only the first sentence
-                audio_path = generate_voice_output(voice_text, language_code)
-                if audio_path and os.path.exists(audio_path):
-                    try:
-                        pygame.mixer.music.load(audio_path)
-                        pygame.mixer.music.play()
-                        # Strict non-overlapping playback lock
-                        while pygame.mixer.music.get_busy():
-                            pygame.time.Clock().tick(10)
-                        pygame.mixer.music.unload()
-                    except Exception as e:
-                        print(f"[demo] Audio playback failed: {e}")
-                    finally:
-                        try:
-                            if os.path.exists(audio_path):
-                                os.remove(audio_path)
-                        except Exception as e:
-                            print(f"[demo] Failed to delete temporary audio file: {e}")
+                # Initialize background prefetch queue
+                prefetcher = AudioPrefetcher(sentences, language_code)
+                prefetcher.start()
+
+                try:
+                    for idx, sentence in enumerate(sentences):
+                        audio_path = prefetcher.get_path(idx)
+                        if audio_path and os.path.exists(audio_path):
+                            try:
+                                pygame.mixer.music.load(audio_path)
+                                pygame.mixer.music.play()
+                                # Wait for sentence to finish playing
+                                while pygame.mixer.music.get_busy():
+                                    pygame.time.Clock().tick(10)
+                                pygame.mixer.music.unload()
+                            except Exception as e:
+                                print(f"[demo] Audio playback failed for sentence {idx+1}: {e}")
+                            finally:
+                                # Clean up asset immediately after playback completes
+                                try:
+                                    if os.path.exists(audio_path):
+                                        os.remove(audio_path)
+                                except Exception as e:
+                                    print(f"[demo] Failed to delete temporary audio file: {e}")
+                finally:
+                    prefetcher.stop()
                             
                 log_interaction(session_id, transcript, ai_response)
                 
