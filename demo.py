@@ -47,6 +47,8 @@ from config import STT_PROVIDER          # noqa: E402
 from src.eval_logger import log_transcription, print_recent_logs, get_next_sequential_session_id, DB_PATH  # noqa: E402
 from src.llm_engine import generate_llm_response # noqa: E402
 from src.tts_engine import generate_voice_output  # noqa: E402
+from src.conversation_manager import ConversationManager  # noqa: E402
+
 import sqlite3
 import pygame
 
@@ -403,6 +405,28 @@ def main():
                 session_id = user_input
                 print("Session rehydrated.")
 
+            # Initiate Conversation Manager and greeting
+            conv_manager = ConversationManager()
+            greeting = conv_manager.initiate_conversation()
+            print(f"\n\033[96mAssistant: {greeting}\033[0m\n")
+
+            # Prefetch and play greeting audio
+            greeting_sentences = [greeting]
+            greeting_prefetcher = AudioPrefetcher(greeting_sentences, "en-IN")
+            greeting_prefetcher.start()
+            greeting_audio_path = greeting_prefetcher.get_audio_path(0)
+            if greeting_audio_path and os.path.exists(greeting_audio_path):
+                try:
+                    pygame.mixer.music.load(greeting_audio_path)
+                    pygame.mixer.music.play()
+                    while pygame.mixer.music.get_busy():
+                        time.sleep(0.05)
+                    pygame.mixer.music.unload()
+                    os.remove(greeting_audio_path)
+                except Exception as e:
+                    print(f"[demo] Greeting audio playback failed: {e}")
+            greeting_prefetcher.stop()
+
             while True:
                 result = acquire_and_transcribe(args.engine, args.audio, args.reference)
                 if not result:
@@ -439,8 +463,23 @@ def main():
                     system_modifier = "Respond in crisp, clear logistics English." + brevity_instruction
 
                 print(f"\n\033[92mUser: {transcript}\033[0m")
-                ai_response = generate_llm_response(session_id, transcript, DB_PATH, system_modifier=system_modifier)
-                print(f"\033[96mAssistant: {ai_response}\033[0m\n")
+                
+                # Classify user intent
+                intent = conv_manager.parse_intent(transcript)
+                print(f"[Intent Detection] User intent classified as: {intent}")
+                
+                # Static responses based on detected intent
+                intent_responses = {
+                    "track_shipment": "I can help you look into that shipment. Let's get started.",
+                    "schedule_pickup": "I will assist you in scheduling a pickup for your package.",
+                    "delivery_status": "Let's check the current delivery status of your order.",
+                    "shipment_delay": "I'm sorry for the delay. Let me find out what happened with your shipment.",
+                    "general_inquiry": "Sure, I can answer your logistics questions. How can I help?",
+                    "unknown": "I am not quite sure how to help with that. Could you please rephrase?"
+                }
+                
+                ai_response = intent_responses.get(intent, intent_responses["unknown"])
+                print(f"\033[96mAssistant (Intent Confirmation): {ai_response}\033[0m\n")
                 
                 # Split the full response into clean sentences using regex
                 import re
