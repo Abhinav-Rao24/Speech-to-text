@@ -11,7 +11,7 @@ class ConversationManager:
     def __init__(self):
         # Workflows: TRACKING, PICKUP, DELAY, GENERAL, NONE
         self.current_workflow = "NONE"
-        # Steps: GREETING, COLLECTING, FINALIZED
+        # Steps: GREETING, COLLECTING, OFFER_HELP, FINALIZED
         self.current_step = "GREETING"
         # History rolling window (cap at 6 messages)
         self.history = []
@@ -139,17 +139,71 @@ class ConversationManager:
             print(f"[Warning] Safe JSON parsing failed for slot extraction: {e}")
             return True
 
+    def _is_negative_response(self, user_input: str) -> bool:
+        """Use LLM to classify if user responds negatively to 'anything else' question."""
+        system_prompt = (
+            "You are a conversation flow assistant.\n"
+            "The user was asked 'Is there anything else I can help you with?'\n"
+            "Analyze the user's input and determine if it is a negative/decline response (e.g., 'no', 'that is all', 'no thanks', 'nothing else', 'nope').\n\n"
+            "Respond ONLY with 'NO' if they decline further assistance.\n"
+            "Otherwise, respond with 'YES' (e.g., they ask another question, say yes, or request a new task).\n"
+            "Do not include punctuation or other text."
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_input}
+        ]
+
+        try:
+            response = self.client.chat.completions.create(
+                model=config.LLM_MODEL,
+                messages=messages,
+                max_tokens=10,
+                temperature=0.0
+            )
+            res = response.choices[0].message.content.strip().upper()
+            return "NO" in res
+        except Exception as e:
+            print(f"[Warning] Failed to classify negative response: {e}")
+            lower_input = user_input.lower().strip()
+            negative_words = ["no", "nothing", "that's all", "that is all", "nope", "no thanks", "no, thank you"]
+            return any(word in lower_input for word in negative_words)
+
+    def reset_session(self):
+        """Reset the conversation state and clear all slot variables."""
+        self.current_workflow = "NONE"
+        self.current_step = "GREETING"
+        self.slots = {
+            "tracking_id": None,
+            "pickup_location": None,
+            "pickup_date": None
+        }
+
     def process_message(self, user_input: str) -> tuple[str, str]:
-        """Process user message, classify intent, extract slots, and return (response, intent)."""
+        """Process user message, classify intent, extract slots, and handle workflow steps."""
         self.add_to_history("user", user_input)
 
-        # 1. Determine active workflow/intent
+        # Case 1: Active OFFER_HELP check
+        if self.current_step == "OFFER_HELP":
+            if self._is_negative_response(user_input):
+                response = "Thank you for contacting Colaberry Logistics Support. Have a great day!"
+                self.reset_session()
+                self.add_to_history("assistant", response)
+                return response, "unknown"
+            else:
+                # Wipe previous slots/state to process the new request afresh
+                self.reset_session()
+
+        # Case 2: Determine active workflow/intent
         intent = "unknown"
         original_workflow = self.current_workflow
         if self.current_workflow == "NONE":
             intent = self.parse_intent(user_input)
-            if intent in ["track_shipment", "delivery_status", "shipment_delay"]:
+            if intent in ["track_shipment", "delivery_status"]:
                 self.current_workflow = "TRACKING"
+            elif intent == "shipment_delay":
+                self.current_workflow = "DELAY"
             elif intent == "schedule_pickup":
                 self.current_workflow = "PICKUP"
             elif intent == "general_inquiry":
@@ -157,13 +211,15 @@ class ConversationManager:
             else:
                 self.current_workflow = "NONE"
 
-        # 2. Extract slots and validate input domain
+        # Case 3: Extract slots and validate input domain
         is_valid_input = self._extract_slots(user_input)
 
-        # 3. Handle out-of-domain/gibberish during collecting step
+        # Case 4: Handle out-of-domain/gibberish during collecting step
         if not is_valid_input and original_workflow != "NONE":
             response = ""
             if self.current_workflow == "TRACKING":
+                response = "I can help you with your logistics request, but first, please provide a valid shipment ID so we can proceed."
+            elif self.current_workflow == "DELAY":
                 response = "I can help you with your logistics request, but first, please provide a valid shipment ID so we can proceed."
             elif self.current_workflow == "PICKUP":
                 if self.slots["pickup_location"] is None:
@@ -176,16 +232,24 @@ class ConversationManager:
             self.add_to_history("assistant", response)
             return response, "unknown"
 
-        # 4. Handle conversation flow and state updates
+        # Case 5: Handle active workflow execution and response generation
         response = ""
         if self.current_workflow == "TRACKING":
             if self.slots["tracking_id"] is None:
                 self.current_step = "COLLECTING"
                 response = "Please provide your shipment ID."
             else:
-                self.current_step = "FINALIZED"
-                response = f"Confirmed: Retrieving status for shipment ID {self.slots['tracking_id']}."
+                self.current_step = "OFFER_HELP"
+                response = f"Your shipment {self.slots['tracking_id']} is currently at the Hyderabad Distribution Hub. Is there anything else I can help you with?"
         
+        elif self.current_workflow == "DELAY":
+            if self.slots["tracking_id"] is None:
+                self.current_step = "COLLECTING"
+                response = "Please provide your shipment ID."
+            else:
+                self.current_step = "OFFER_HELP"
+                response = f"Your shipment {self.slots['tracking_id']} is delayed due to: Customs Hold at Hyderabad Distribution Hub. We recommend contacting central support or choosing to reroute. Is there anything else I can help you with?"
+
         elif self.current_workflow == "PICKUP":
             if self.slots["pickup_location"] is None:
                 self.current_step = "COLLECTING"
@@ -194,12 +258,13 @@ class ConversationManager:
                 self.current_step = "COLLECTING"
                 response = "Please provide your pickup date."
             else:
-                self.current_step = "FINALIZED"
-                response = f"Confirmed: Booking pickup at {self.slots['pickup_location']} on {self.slots['pickup_date']}."
+                self.current_step = "OFFER_HELP"
+                response = f"Confirmed: Booking pickup at {self.slots['pickup_location']} on {self.slots['pickup_date']}. Is there anything else I can help you with?"
         
         elif self.current_workflow == "GENERAL":
-            self.current_step = "FINALIZED"
-            response = "Sure, I can answer your logistics questions. How can I help?"
+            self.current_step = "COLLECTING"
+            response = "I can help with general questions. What details can I provide for you today?"
+            self.current_workflow = "NONE"
         
         else:
             self.current_step = "COLLECTING"
