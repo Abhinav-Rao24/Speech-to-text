@@ -80,23 +80,29 @@ class ConversationManager:
             print(f"[ERROR] Intent parsing failed: {e}")
             return "unknown"
 
-    def _extract_slots(self, user_input: str):
-        """Extract tracking_id, pickup_location, and pickup_date from user input using the LLM."""
+    def _extract_slots(self, user_input: str) -> bool:
+        """Extract slots and validate input domain. Returns True if valid, False if out-of-domain/gibberish."""
         system_prompt = (
-            "You are a slot extraction assistant for a logistics support system.\n"
-            "Analyze the user's input and extract any values for:\n"
+            "You are a slot extraction and conversation validation assistant for a logistics support system.\n"
+            "Analyze the user's input and current active workflow, then extract values for:\n"
             "1. tracking_id (any alphanumeric ID or reference number, e.g., TX12345)\n"
             "2. pickup_location (the city, state, or location, e.g., Hyderabad, Delhi)\n"
             "3. pickup_date (a date or day, e.g., tomorrow, next Monday, 15th July)\n\n"
-            "Return a JSON object with the exact keys: \"tracking_id\", \"pickup_location\", and \"pickup_date\".\n"
+            "Also evaluate if the user's input is a valid request, general logistics question, or a response to our question.\n"
+            "Identify if the input is completely off-topic (e.g., 'Tell me a joke', 'What is the capital of France?') or meaningless gibberish (e.g., 'asdfgh', 'xyz').\n\n"
+            "Return a JSON object with the exact keys:\n"
+            "- \"tracking_id\"\n"
+            "- \"pickup_location\"\n"
+            "- \"pickup_date\"\n"
+            "- \"is_valid_input\": true if the input is relevant/valid; false if it is gibberish or an off-topic/out-of-domain request.\n\n"
             "If a slot is not present or not mentioned, set its value to null.\n"
-            "Ensure that you do not overwrite existing slots with null if the user has already provided them in this conversation.\n"
+            "Ensure that you do not overwrite existing slots with null if they are already provided in the active slots state.\n"
             "Respond ONLY with the JSON object. Do not include markdown code blocks (like ```json) or explanations."
         )
 
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"User Input: {user_input}\nActive Slots State: {json.dumps(self.slots)}"}
+            {"role": "user", "content": f"Active Workflow: {self.current_workflow}\nUser Input: {user_input}\nActive Slots State: {json.dumps(self.slots)}"}
         ]
 
         try:
@@ -119,12 +125,19 @@ class ConversationManager:
                 content = "\n".join(lines).strip()
 
             extracted = json.loads(content)
-            for key in ["tracking_id", "pickup_location", "pickup_date"]:
-                val = extracted.get(key)
-                if val is not None and str(val).strip().lower() != "null" and str(val).strip() != "":
-                    self.slots[key] = str(val).strip()
+            is_valid_input = extracted.get("is_valid_input", True)
+            
+            if is_valid_input:
+                for key in ["tracking_id", "pickup_location", "pickup_date"]:
+                    val = extracted.get(key)
+                    if val is not None and str(val).strip().lower() != "null" and str(val).strip() != "":
+                        self.slots[key] = str(val).strip()
+                return True
+            else:
+                return False
         except Exception as e:
             print(f"[Warning] Safe JSON parsing failed for slot extraction: {e}")
+            return True
 
     def process_message(self, user_input: str) -> tuple[str, str]:
         """Process user message, classify intent, extract slots, and return (response, intent)."""
@@ -132,6 +145,7 @@ class ConversationManager:
 
         # 1. Determine active workflow/intent
         intent = "unknown"
+        original_workflow = self.current_workflow
         if self.current_workflow == "NONE":
             intent = self.parse_intent(user_input)
             if intent in ["track_shipment", "delivery_status", "shipment_delay"]:
@@ -143,10 +157,26 @@ class ConversationManager:
             else:
                 self.current_workflow = "NONE"
 
-        # 2. Extract slots
-        self._extract_slots(user_input)
+        # 2. Extract slots and validate input domain
+        is_valid_input = self._extract_slots(user_input)
 
-        # 3. Handle conversation flow and state updates
+        # 3. Handle out-of-domain/gibberish during collecting step
+        if not is_valid_input and original_workflow != "NONE":
+            response = ""
+            if self.current_workflow == "TRACKING":
+                response = "I can help you with your logistics request, but first, please provide a valid shipment ID so we can proceed."
+            elif self.current_workflow == "PICKUP":
+                if self.slots["pickup_location"] is None:
+                    response = "I can help you with your logistics request, but first, please provide a valid pickup location so we can proceed."
+                else:
+                    response = "I can help you with your logistics request, but first, please provide a valid pickup date so we can proceed."
+            else:
+                response = "I am not quite sure how to help with that. Could you please rephrase?"
+            
+            self.add_to_history("assistant", response)
+            return response, "unknown"
+
+        # 4. Handle conversation flow and state updates
         response = ""
         if self.current_workflow == "TRACKING":
             if self.slots["tracking_id"] is None:
