@@ -464,22 +464,14 @@ def main():
 
                 print(f"\n\033[92mUser: {transcript}\033[0m")
                 
-                # Classify user intent
-                intent = conv_manager.parse_intent(transcript)
+                # Process message through ConversationManager
+                ai_response, intent = conv_manager.process_message(transcript)
+                
+                import json
                 print(f"[Intent Detection] User intent classified as: {intent}")
-                
-                # Static responses based on detected intent
-                intent_responses = {
-                    "track_shipment": "I can help you look into that shipment. Let's get started.",
-                    "schedule_pickup": "I will assist you in scheduling a pickup for your package.",
-                    "delivery_status": "Let's check the current delivery status of your order.",
-                    "shipment_delay": "I'm sorry for the delay. Let me find out what happened with your shipment.",
-                    "general_inquiry": "Sure, I can answer your logistics questions. How can I help?",
-                    "unknown": "I am not quite sure how to help with that. Could you please rephrase?"
-                }
-                
-                ai_response = intent_responses.get(intent, intent_responses["unknown"])
-                print(f"\033[96mAssistant (Intent Confirmation): {ai_response}\033[0m\n")
+                print(f"[Workflow State] Workflow: {conv_manager.current_workflow} | Step: {conv_manager.current_step}")
+                print(f"[Active Slots State] Slots: {json.dumps(conv_manager.slots)}")
+                print(f"\033[96mAssistant: {ai_response}\033[0m\n")
                 
                 # Split the full response into clean sentences using regex
                 import re
