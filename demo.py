@@ -54,6 +54,104 @@ import pygame
 pygame.mixer.init()
 
 # ---------------------------------------------------------------------------
+# Silero VAD Model Loading with Offline Fallback
+# ---------------------------------------------------------------------------
+import torch
+import numpy as np
+
+print("Loading Silero VAD model...")
+VAD_MODEL = None
+
+try:
+    # Try to load via torch.hub from the remote repository / local cache
+    VAD_MODEL, _ = torch.hub.load(
+        repo_or_dir='snakers4/silero-vad',
+        model='silero_vad',
+        force_reload=False
+    )
+    print("Successfully loaded Silero VAD model via Torch Hub.")
+except Exception as hub_err:
+    print(f"[Warning] Failed to load Silero VAD via Torch Hub: {hub_err}")
+    # Try loading from local torch hub cache directory directly
+    try:
+        import os
+        hub_dir = torch.hub.get_dir()
+        local_repo_dir = os.path.join(hub_dir, 'snakers4_silero-vad_master')
+        if os.path.exists(local_repo_dir):
+            print(f"Attempting to load from local hub cache directory: {local_repo_dir}")
+            VAD_MODEL = torch.hub.load(
+                local_repo_dir,
+                'silero_vad',
+                source='local',
+                onnx=False
+            )
+            print("Successfully loaded Silero VAD model from local Hub cache.")
+    except Exception as local_hub_err:
+        print(f"[Warning] Failed to load from local Hub cache: {local_hub_err}")
+
+    # Fallback to local ONNX file if it exists, or print warning
+    if VAD_MODEL is None:
+        onnx_file_name = "silero_vad.onnx"
+        local_onnx_paths = [
+            onnx_file_name,
+            os.path.join(ROOT, onnx_file_name),
+            os.path.expanduser("~/.cache/torch/hub/snakers4_silero-vad_master/files/silero_vad.onnx")
+        ]
+        onnx_path = None
+        for p in local_onnx_paths:
+            if os.path.exists(p):
+                onnx_path = p
+                break
+        
+        if onnx_path:
+            try:
+                import onnxruntime as ort
+                print(f"Loading local ONNX model from: {onnx_path}")
+                ort_session = ort.InferenceSession(onnx_path)
+                
+                class SileroVADONNXWrapper:
+                    def __init__(self, session):
+                        self.session = session
+                        self._h = np.zeros((2, 1, 64), dtype=np.float32)
+                        self._c = np.zeros((2, 1, 64), dtype=np.float32)
+                    
+                    def __call__(self, x, sr):
+                        if isinstance(x, torch.Tensor):
+                            x_np = x.cpu().numpy()
+                        else:
+                            x_np = np.array(x, dtype=np.float32)
+                        if x_np.ndim == 1:
+                            x_np = np.expand_dims(x_np, axis=0)
+                        
+                        ort_inputs = {
+                            'input': x_np,
+                            'sr': np.array(sr, dtype=np.int64),
+                            'h': self._h,
+                            'c': self._c
+                        }
+                        out, h_out, c_out = self.session.run(None, ort_inputs)
+                        self._h = h_out
+                        self._c = c_out
+                        prob = out[0][0]
+                        
+                        class ProbWrapper:
+                            def __init__(self, val):
+                                self.val = val
+                            def item(self):
+                                return self.val
+                        return ProbWrapper(prob)
+                
+                VAD_MODEL = SileroVADONNXWrapper(ort_session)
+                print("Successfully loaded Silero VAD using local ONNX fallback.")
+            except Exception as ort_err:
+                print(f"[Warning] Failed to initialize local ONNX runtime: {ort_err}")
+
+if VAD_MODEL is None:
+    print("\n[WARNING] Silero VAD model could not be loaded (no internet and no local cache found).")
+    print("[WARNING] Barge-in detection will fall back to legacy RMS calculations.\n")
+
+
+# ---------------------------------------------------------------------------
 # Barge-In Constants
 # ---------------------------------------------------------------------------
 # RMS amplitude threshold (0–32767 range for 16-bit PCM).
@@ -406,7 +504,8 @@ def main():
                         # Active mic-monitoring barge-in loop.
                         # Replaces the idle pygame.time.Clock().tick() wait.
                         # ---------------------------------------------------
-                        above_threshold_ms = 0.0  # rolling counter of sustained speech
+                        consecutive_vad_speech_chunks = 0  # counter for VAD
+                        above_threshold_ms = 0.0  # rolling counter of sustained speech (RMS fallback)
                         chunk_duration_ms = (PYAUDIO_CHUNK / PYAUDIO_RATE) * 1000  # ms per chunk
                         printed_debug = False
 
@@ -415,30 +514,71 @@ def main():
                                 if _mic_stream is not None:
                                     try:
                                         mic_data = _mic_stream.read(PYAUDIO_CHUNK, exception_on_overflow=False)
-                                        # Compute RMS of the 16-bit PCM chunk
-                                        num_samples = len(mic_data) // 2
-                                        if num_samples > 0:
-                                            samples = struct.unpack(f"{num_samples}h", mic_data)
-                                            rms = math.sqrt(sum(s * s for s in samples) / num_samples)
+                                        
+                                        if VAD_MODEL is not None:
+                                            # Convert binary raw input data buffer directly into a normalized float32 numpy array
+                                            audio_chunk = np.frombuffer(mic_data, dtype=np.int16).astype(np.float32) / 32768.0
+                                            
+                                            # Verify Sample Alignment and compute VAD speech probability.
+                                            # Silero VAD JIT model expects exactly 512 samples for 16kHz stream.
+                                            # We process the audio_chunk in 512-sample sub-chunks.
+                                            sub_chunk_size = 512
+                                            probs = []
+                                            for start_idx in range(0, len(audio_chunk), sub_chunk_size):
+                                                sub_chunk = audio_chunk[start_idx:start_idx + sub_chunk_size]
+                                                if len(sub_chunk) < sub_chunk_size:
+                                                    sub_chunk = np.pad(sub_chunk, (0, sub_chunk_size - len(sub_chunk)), 'constant')
+                                                
+                                                tensor_chunk = torch.from_numpy(sub_chunk)
+                                                
+                                                # Evaluate within torch.no_grad() context
+                                                with torch.no_grad():
+                                                    prob = VAD_MODEL(tensor_chunk, PYAUDIO_RATE).item()
+                                                probs.append(prob)
+                                            
+                                            speech_prob = max(probs) if probs else 0.0
+                                            
+                                            if not printed_debug:
+                                                print(f"[Barge-In Debug] Silero VAD probability: {speech_prob:.4f} (Threshold: 0.70)")
+                                                printed_debug = True
+                                                
+                                            if speech_prob > 0.70:
+                                                consecutive_vad_speech_chunks += 1
+                                            else:
+                                                consecutive_vad_speech_chunks = 0
+                                                
+                                            if consecutive_vad_speech_chunks > 2:
+                                                # --- BARGE-IN TRIGGERED ---
+                                                pygame.mixer.music.stop()   # silence music instantly
+                                                prefetcher.stop()     # reset prefetch engine queue / stop prefetcher
+                                                print("\n[BARGE-IN] Silero VAD speech detection confirmed. Transitioning to listen phase...")
+                                                barged_in = True
+                                                break
                                         else:
-                                            rms = 0.0
+                                            # Fallback: Compute RMS of the 16-bit PCM chunk
+                                            num_samples = len(mic_data) // 2
+                                            if num_samples > 0:
+                                                samples = struct.unpack(f"{num_samples}h", mic_data)
+                                                rms = math.sqrt(sum(s * s for s in samples) / num_samples)
+                                            else:
+                                                rms = 0.0
 
-                                        if not printed_debug:
-                                            print(f"[Barge-In Debug] Current mic RMS: {rms:.1f} (Threshold: {BARGE_IN_THRESHOLD})")
-                                            printed_debug = True
+                                            if not printed_debug:
+                                                print(f"[Barge-In Debug] Current mic RMS: {rms:.1f} (Threshold: {BARGE_IN_THRESHOLD})")
+                                                printed_debug = True
 
-                                        if rms > BARGE_IN_THRESHOLD:
-                                            above_threshold_ms += chunk_duration_ms
-                                        else:
-                                            above_threshold_ms = 0.0  # reset if voice drops below threshold
+                                            if rms > BARGE_IN_THRESHOLD:
+                                                above_threshold_ms += chunk_duration_ms
+                                            else:
+                                                above_threshold_ms = 0.0  # reset if voice drops below threshold
 
-                                        if above_threshold_ms >= BARGE_IN_DURATION_MS:
-                                            # --- BARGE-IN TRIGGERED ---
-                                            pygame.mixer.music.stop()   # silence music instantly
-                                            prefetcher.stop()     # halt background TTS fetch
-                                            print("\n[BARGE-IN] User interrupted the agent. Halting playback and listening...")
-                                            barged_in = True
-                                            break
+                                            if above_threshold_ms >= BARGE_IN_DURATION_MS:
+                                                # --- BARGE-IN TRIGGERED ---
+                                                pygame.mixer.music.stop()   # silence music instantly
+                                                prefetcher.stop()     # halt background TTS fetch
+                                                print("\n[BARGE-IN] User interrupted the agent. Halting playback and listening...")
+                                                barged_in = True
+                                                break
                                     except OSError:
                                         # Mic read error — skip this chunk, keep playing
                                         pass

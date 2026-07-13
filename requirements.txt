@@ -11,3 +11,4 @@ elevenlabs
 google-cloud-texttospeech
 pygame
 pyaudio
+onnxruntime
