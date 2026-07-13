@@ -58,7 +58,7 @@ pygame.mixer.init()
 # ---------------------------------------------------------------------------
 # RMS amplitude threshold (0–32767 range for 16-bit PCM).
 # Raise this if background noise causes false triggers.
-BARGE_IN_THRESHOLD   = 500
+BARGE_IN_THRESHOLD   = 1500
 # How many consecutive milliseconds of above-threshold audio counts as speech.
 BARGE_IN_DURATION_MS = 200
 # PyAudio microphone monitoring settings
@@ -68,22 +68,14 @@ PYAUDIO_RATE         = 16000  # Hz
 class AudioPrefetcher:
     """
     A thread-safe audio prefetcher that fetches TTS audio for a list of sentences
-    concurrently in a background thread.
-
-    Key design improvements over the previous version:
-    - Raw audio **bytes** are stored in memory (not disk paths), eliminating the
-      disk-read latency between TTS download and pygame playback.
-    - A ``threading.Event`` per sentence index replaces the busy-poll
-      ``time.sleep(0.05)`` loop, so ``get_audio(idx)`` blocks efficiently until
-      exactly that sentence is ready — not until all are done.
-    - ``stop()`` signals the background thread *and* sets all pending Events so
-      any waiting ``get_audio()`` call unblocks immediately (needed for barge-in).
+    concurrently in a background thread, caching their local absolute paths so they can be played back
+    with minimum latency.
     """
 
     def __init__(self, sentences: list, language_code: str):
         self.sentences = sentences
         self.language_code = language_code
-        self._audio_bytes: dict[int, bytes | None] = {}   # index -> raw wav bytes (or None on failure)
+        self._audio_paths: dict[int, str | None] = {}   # index -> absolute file path
         self._events: list[threading.Event] = [threading.Event() for _ in sentences]
         self._lock = threading.Lock()
         self.stopped = False
@@ -99,18 +91,27 @@ class AudioPrefetcher:
 
     def stop(self) -> None:
         """
-        Signal the background thread to stop and unblock any waiting
-        ``get_audio()`` calls so the playback loop can exit cleanly.
+        Signal the background thread to stop, unblock any waiting
+        ``get_audio_path()`` calls, and delete any generated files.
         """
         self.stopped = True
-        # Unblock all events so any thread blocked in get_audio() returns.
+        # Unblock all events so any thread blocked in get_audio_path() returns.
         for event in self._events:
             event.set()
+        
+        # Clean up any remaining files that were generated but not deleted by the main loop
+        with self._lock:
+            for idx, path in list(self._audio_paths.items()):
+                if path and os.path.exists(path):
+                    try:
+                        os.remove(path)
+                    except Exception:
+                        pass
 
-    def get_audio(self, idx: int) -> bytes | None:
+    def get_audio_path(self, idx: int) -> str | None:
         """
-        Block until the audio bytes for *idx* are available (or the prefetcher
-        has been stopped), then return the raw WAV bytes.
+        Block until the audio path for *idx* is available (or the prefetcher
+        has been stopped), then return the absolute path.
 
         Returns ``None`` if TTS generation failed or the prefetcher was stopped
         before the sentence was ready.
@@ -120,7 +121,7 @@ class AudioPrefetcher:
         if self.stopped:
             return None
         with self._lock:
-            return self._audio_bytes.get(idx)  # may be None if TTS failed
+            return self._audio_paths.get(idx)  # may be None if TTS failed
 
     # ------------------------------------------------------------------
     # Background thread
@@ -131,24 +132,16 @@ class AudioPrefetcher:
             if self.stopped:
                 break
             # generate_voice_output writes to disk and returns the path.
-            # We read the bytes immediately so the file can be cleaned up
-            # and the playback path is fully in-memory.
             path = generate_voice_output(sentence, self.language_code)
-            raw: bytes | None = None
-            if path and os.path.exists(path):
-                try:
-                    with open(path, "rb") as fh:
-                        raw = fh.read()
-                except OSError as exc:
-                    print(f"[AudioPrefetcher] Could not read TTS file for sentence {idx + 1}: {exc}")
-                finally:
-                    # Remove the temp file — we have the bytes in memory now.
+            if self.stopped:
+                if path and os.path.exists(path):
                     try:
                         os.remove(path)
-                    except OSError:
+                    except Exception:
                         pass
+                break
             with self._lock:
-                self._audio_bytes[idx] = raw
+                self._audio_paths[idx] = path
             # Signal the playback thread that this sentence is ready.
             self._events[idx].set()
 
@@ -389,22 +382,24 @@ def main():
                         if barged_in:
                             break
 
-                        # Block here ONLY until THIS sentence's audio bytes are ready.
-                        # Sentence 1 unblocks as soon as sentence 1 TTS finishes —
-                        # regardless of whether sentences 2/3 are done yet.
-                        raw_bytes = prefetcher.get_audio(idx)
+                        # Block here ONLY until THIS sentence's audio path is ready.
+                        audio_path = prefetcher.get_audio_path(idx)
 
-                        if raw_bytes is None:
+                        if audio_path is None or not os.path.exists(audio_path):
                             print(f"[demo] Skipping sentence {idx + 1}: TTS generation returned None.")
                             continue
 
-                        # Load audio directly from in-memory bytes — no disk read.
+                        # Load audio from file path using pygame music module.
                         try:
-                            audio_buf = io.BytesIO(raw_bytes)
-                            sound = pygame.mixer.Sound(file=audio_buf)
-                            channel = sound.play()
+                            pygame.mixer.music.load(audio_path)
+                            pygame.mixer.music.play()
                         except Exception as e:
                             print(f"[demo] Audio playback failed for sentence {idx + 1}: {e}")
+                            try:
+                                if os.path.exists(audio_path):
+                                    os.remove(audio_path)
+                            except Exception:
+                                pass
                             continue
 
                         # ---------------------------------------------------
@@ -413,37 +408,56 @@ def main():
                         # ---------------------------------------------------
                         above_threshold_ms = 0.0  # rolling counter of sustained speech
                         chunk_duration_ms = (PYAUDIO_CHUNK / PYAUDIO_RATE) * 1000  # ms per chunk
+                        printed_debug = False
 
-                        while channel is not None and channel.get_busy():
-                            if _mic_stream is not None:
-                                try:
-                                    mic_data = _mic_stream.read(PYAUDIO_CHUNK, exception_on_overflow=False)
-                                    # Compute RMS of the 16-bit PCM chunk
-                                    num_samples = len(mic_data) // 2
-                                    if num_samples > 0:
-                                        samples = struct.unpack(f"{num_samples}h", mic_data)
-                                        rms = math.sqrt(sum(s * s for s in samples) / num_samples)
-                                    else:
-                                        rms = 0.0
+                        try:
+                            while pygame.mixer.music.get_busy():
+                                if _mic_stream is not None:
+                                    try:
+                                        mic_data = _mic_stream.read(PYAUDIO_CHUNK, exception_on_overflow=False)
+                                        # Compute RMS of the 16-bit PCM chunk
+                                        num_samples = len(mic_data) // 2
+                                        if num_samples > 0:
+                                            samples = struct.unpack(f"{num_samples}h", mic_data)
+                                            rms = math.sqrt(sum(s * s for s in samples) / num_samples)
+                                        else:
+                                            rms = 0.0
 
-                                    if rms > BARGE_IN_THRESHOLD:
-                                        above_threshold_ms += chunk_duration_ms
-                                    else:
-                                        above_threshold_ms = 0.0  # reset if voice drops below threshold
+                                        if not printed_debug:
+                                            print(f"[Barge-In Debug] Current mic RMS: {rms:.1f} (Threshold: {BARGE_IN_THRESHOLD})")
+                                            printed_debug = True
 
-                                    if above_threshold_ms >= BARGE_IN_DURATION_MS:
-                                        # --- BARGE-IN TRIGGERED ---
-                                        pygame.mixer.stop()   # silence all channels instantly
-                                        prefetcher.stop()     # halt background TTS fetch
-                                        print("\n[BARGE-IN] User interrupted the agent. Halting playback and listening...")
-                                        barged_in = True
-                                        break
-                                except OSError:
-                                    # Mic read error — skip this chunk, keep playing
-                                    pass
-                            else:
-                                # No mic available — fall back to a small sleep
-                                time.sleep(0.02)
+                                        if rms > BARGE_IN_THRESHOLD:
+                                            above_threshold_ms += chunk_duration_ms
+                                        else:
+                                            above_threshold_ms = 0.0  # reset if voice drops below threshold
+
+                                        if above_threshold_ms >= BARGE_IN_DURATION_MS:
+                                            # --- BARGE-IN TRIGGERED ---
+                                            pygame.mixer.music.stop()   # silence music instantly
+                                            prefetcher.stop()     # halt background TTS fetch
+                                            print("\n[BARGE-IN] User interrupted the agent. Halting playback and listening...")
+                                            barged_in = True
+                                            break
+                                    except OSError:
+                                        # Mic read error — skip this chunk, keep playing
+                                        pass
+                                else:
+                                    # No mic available — fall back to a small sleep
+                                    time.sleep(0.02)
+                        finally:
+                            # Unload music so pygame releases any file handle/lock
+                            try:
+                                pygame.mixer.music.unload()
+                            except Exception:
+                                pass
+                            
+                            # Clean up the file path immediately after playback completes or interrupts
+                            try:
+                                if os.path.exists(audio_path):
+                                    os.remove(audio_path)
+                            except Exception as e:
+                                print(f"[demo] Failed to delete temporary audio file: {e}")
 
                         if barged_in:
                             break
@@ -460,8 +474,8 @@ def main():
                         _pa.terminate()
                     except Exception:
                         pass
-                    if not barged_in:
-                        prefetcher.stop()
+                    # Stop prefetcher (which deletes any residual files)
+                    prefetcher.stop()
 
                 if barged_in:
                     # Skip logging this interaction and jump straight to STT
