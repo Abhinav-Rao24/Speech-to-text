@@ -133,6 +133,7 @@
 </div>
 {% endif %}
 
+<script src="/static/js/client.js"></script>
 <script>
     // Scroll chat timeline to bottom
     const messagesPanel = document.getElementById('messages-panel');
@@ -156,7 +157,7 @@
         });
     }
 
-    // Canvas drawing initialization for waveform placeholder
+    // Canvas drawing initialization for waveform baseline
     const canvas = document.getElementById('voiceWaveCanvas');
     if (canvas) {
         const ctx = canvas.getContext('2d');
@@ -166,102 +167,31 @@
             ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
         };
         
-        // Initial setup
         resizeCanvas();
-        
-        // Draw flat mock baseline wave
-        const drawMockBaseline = () => {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e5e7eb';
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(0, canvas.height / (2 * window.devicePixelRatio));
-            ctx.lineTo(canvas.width / window.devicePixelRatio, canvas.height / (2 * window.devicePixelRatio));
-            ctx.stroke();
-        };
-        
-        drawMockBaseline();
+        drawBaseline(canvas, ctx);
     }
 
-    // Mock interactive visual states for standard PTT
+    // Wire up standard real-time PTT event handlers to our client.js engine
     const pttMicBtn = document.getElementById('ptt-mic-btn');
-    const statusText = document.getElementById('portal-status-text');
-    const helpText = document.getElementById('portal-help-text');
-    
     if (pttMicBtn) {
-        const startRecord = (e) => {
+        const activeSessionId = '{{ active_session_id }}';
+        
+        const handleStart = (e) => {
             e.preventDefault();
-            pttMicBtn.classList.remove('bg-primary');
-            pttMicBtn.classList.add('bg-red-500');
-            statusText.textContent = 'Listening...';
-            helpText.textContent = 'Recording microphone input. Release to transmit...';
-            
-            // Draw visual waves
-            if (canvas) {
-                const ctx = canvas.getContext('2d');
-                let count = 0;
-                window.mockWaveInterval = setInterval(() => {
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.strokeStyle = '#10b981'; // emerald green line color
-                    ctx.lineWidth = 2;
-                    ctx.beginPath();
-                    const midY = canvas.height / (2 * window.devicePixelRatio);
-                    ctx.moveTo(0, midY);
-                    
-                    const width = canvas.width / window.devicePixelRatio;
-                    for (let x = 0; x < width; x++) {
-                        const waveVal = Math.sin(x * 0.05 + count) * Math.cos(x * 0.01) * 15;
-                        ctx.lineTo(x, midY + waveVal);
-                    }
-                    ctx.stroke();
-                    count += 0.2;
-                }, 30);
-            }
+            startPttRecording(activeSessionId);
+        };
+        
+        const handleStop = (e) => {
+            e.preventDefault();
+            stopPttRecording();
         };
 
-        const stopRecord = (e) => {
-            e.preventDefault();
-            if (pttMicBtn.classList.contains('bg-red-500')) {
-                pttMicBtn.classList.remove('bg-red-500');
-                pttMicBtn.classList.add('bg-primary');
-                statusText.textContent = 'Processing...';
-                helpText.textContent = 'Executing speech recognition & state model...';
-                
-                if (window.mockWaveInterval) {
-                    clearInterval(window.mockWaveInterval);
-                    window.mockWaveInterval = null;
-                }
-                
-                // Draw flat mock baseline wave again
-                if (canvas) {
-                    const ctx = canvas.getContext('2d');
-                    ctx.clearRect(0, 0, canvas.width, canvas.height);
-                    ctx.strokeStyle = '#10b981';
-                    ctx.lineWidth = 1.5;
-                    ctx.beginPath();
-                    ctx.moveTo(0, canvas.height / (2 * window.devicePixelRatio));
-                    ctx.lineTo(canvas.width / window.devicePixelRatio, canvas.height / (2 * window.devicePixelRatio));
-                    ctx.stroke();
-                }
+        pttMicBtn.addEventListener('mousedown', handleStart);
+        pttMicBtn.addEventListener('mouseup', handleStop);
+        pttMicBtn.addEventListener('mouseleave', handleStop);
 
-                setTimeout(() => {
-                    statusText.textContent = 'Speaking...';
-                    helpText.textContent = 'Synthesizing voice playback audio...';
-                    
-                    setTimeout(() => {
-                        statusText.textContent = 'Voice Agent Ready';
-                        helpText.textContent = 'Press and hold the button to record your speech. Release when finished.';
-                    }, 2000);
-                }, 1500);
-            }
-        };
-
-        pttMicBtn.addEventListener('mousedown', startRecord);
-        pttMicBtn.addEventListener('mouseup', stopRecord);
-        pttMicBtn.addEventListener('mouseleave', stopRecord);
-
-        pttMicBtn.addEventListener('touchstart', startRecord);
-        pttMicBtn.addEventListener('touchend', stopRecord);
+        pttMicBtn.addEventListener('touchstart', handleStart);
+        pttMicBtn.addEventListener('touchend', handleStop);
     }
 </script>
 {% endblock %}

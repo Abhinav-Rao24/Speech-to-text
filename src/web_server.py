@@ -1,12 +1,16 @@
 import os
 import sys
-from fastapi import FastAPI, Request, Form, HTTPException, Depends
+from fastapi import FastAPI, Request, Form, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 from authlib.integrations.starlette_client import OAuth
 from dotenv import load_dotenv
+import uuid
+import wave
+import time
+import config
 
 # Ensure parent directory is in python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -304,3 +308,205 @@ async def send_chat_message(request: Request, session_id: str, text: str = Form(
         conn.close()
         
     return RedirectResponse(url=f"/conversations?session_id={session_id}", status_code=303)
+
+
+@app.websocket("/ws/stream")
+async def websocket_stream(websocket: WebSocket, session_id: str):
+    """
+    Handles real-time client microphone audio streaming.
+    Verifies user authentication context via scope session cookie.
+    Accumulates binary PCM data, routes it to STT, LLM, and TTS pipelines.
+    Logs transaction latencies and token bandwidth metrics.
+    """
+    # Access Session context for security/isolation check
+    session_user = websocket.scope.get("session", {}).get("user")
+    if not session_user:
+        await websocket.close(code=1008) # Policy Violation
+        return
+
+    # Check active session ownership
+    session_data = database.get_session(session_id)
+    if not session_data or session_data["user_id"] != session_user["id"]:
+        await websocket.close(code=1008)
+        return
+
+    await websocket.accept()
+    
+    pcm_data = bytearray()
+    
+    try:
+        while True:
+            # Accept binary audio chunks or control commands
+            message = await websocket.receive()
+            if "bytes" in message:
+                pcm_data.extend(message["bytes"])
+            elif "text" in message:
+                import json
+                cmd = json.loads(message["text"])
+                if cmd.get("type") == "stop_recording":
+                    # Stop signal received, run pipeline
+                    await run_voice_pipeline(websocket, session_id, pcm_data, session_data)
+                    pcm_data = bytearray() # Clear stream buffer
+    except WebSocketDisconnect:
+        print(f"[WebSocket] Session {session_id} disconnected")
+    except Exception as e:
+        print(f"[WebSocket Error] Session {session_id}: {e}")
+        try:
+            await websocket.close()
+        except:
+            pass
+
+async def run_voice_pipeline(websocket: WebSocket, session_id: str, pcm_data: bytearray, session_data: dict):
+    if len(pcm_data) == 0:
+        return
+        
+    start_turn_time = time.time()
+    
+    # Save raw PCM bytes as a temporary 16kHz Mono 16-bit WAV file
+    temp_wav_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        f"temp_input_{uuid.uuid4().hex}.wav"
+    )
+    
+    try:
+        with wave.open(temp_wav_path, "wb") as wav_file:
+            wav_file.setnchannels(1)
+            wav_file.setsampwidth(2) # 16-bit PCM
+            wav_file.setframerate(16000) # 16kHz
+            wav_file.writeframes(pcm_data)
+    except Exception as e:
+        print(f"[Error] Failed to write temp input WAV: {e}")
+        return
+
+    # 1. Speech-to-Text (STT) processing
+    stt_start_time = time.time()
+    stt_result = None
+    try:
+        provider = getattr(config, "STT_PROVIDER", "sarvam").lower()
+        if provider == "local":
+            from src.stt_engine import transcribe_local
+            stt_result = transcribe_local(temp_wav_path)
+        else:
+            from src.sarvam_engine import transcribe_sarvam
+            stt_result = transcribe_sarvam(temp_wav_path)
+    except Exception as e:
+        print(f"[STT Error] Speech recognition failed: {e}")
+    finally:
+        # Delete temp audio input file immediately to clean up workspace
+        try:
+            if os.path.exists(temp_wav_path):
+                os.remove(temp_wav_path)
+        except Exception as e:
+            print(f"[Warning] Failed to remove temp audio file: {e}")
+
+    if not stt_result or not stt_result.get("text", "").strip():
+        # Inform client of silence / recognition failure
+        await websocket.send_json({
+            "type": "transcript",
+            "sender": "assistant",
+            "text": "I couldn't catch that. Please speak again while holding the mic."
+        })
+        return
+
+    user_text = stt_result["text"].strip()
+    
+    # 2. Commit User dialogue transcript bubble to SQLite
+    database.save_message(session_id, "user", user_text)
+    
+    # Send user's text back to dynamically append transcript on client screen
+    await websocket.send_json({
+        "type": "transcript",
+        "sender": "user",
+        "text": user_text
+    })
+
+    # 3. Instantiate and restore ConversationManager state
+    manager = ConversationManager()
+    manager.current_workflow = session_data["workflow"] or "NONE"
+    manager.slots = {
+        "tracking_id": session_data["tracking_id"],
+        "pickup_location": session_data["pickup_location"],
+        "pickup_date": session_data["pickup_date"]
+    }
+    
+    # Fetch historical rolling window
+    history_messages = database.get_session_messages(session_id)
+    manager.history = []
+    for msg in history_messages[-6:]:
+        manager.history.append({
+            "role": msg["sender"],
+            "content": msg["text"]
+        })
+
+    # 4. Generate Logistics response intent
+    ai_response, intent = manager.process_message(user_text)
+
+    # Commit Assistant response to SQLite
+    database.save_message(session_id, "assistant", ai_response)
+    
+    # Update active slots state in SQLite
+    database.update_session_state(
+        session_id,
+        workflow=manager.current_workflow,
+        tracking_id=manager.slots["tracking_id"],
+        pickup_location=manager.slots["pickup_location"],
+        pickup_date=manager.slots["pickup_date"]
+    )
+
+    # Send assistant's text back to dynamically append transcript on client screen
+    await websocket.send_json({
+        "type": "transcript",
+        "sender": "assistant",
+        "text": ai_response
+    })
+
+    # Update session name if it was default "New Chat"
+    if session_data["name"] == "New Chat":
+        new_name = user_text[:24]
+        if len(user_text) > 24:
+            new_name += "..."
+        conn = database.get_db_connection()
+        conn.execute("UPDATE chat_sessions SET name = ? WHERE session_id = ?", (new_name, session_id))
+        conn.commit()
+        conn.close()
+
+    # 5. Text-to-Speech (TTS) generation
+    tts_start_time = time.time()
+    
+    # Active language mapping
+    raw_lang = stt_result.get("language", "en-IN")
+    lang_mapping = {
+        "te": "te-IN",
+        "hi": "hi-IN",
+        "en": "en-IN"
+    }
+    language_code = lang_mapping.get(raw_lang, raw_lang)
+    if not language_code or language_code == "Unknown":
+        language_code = "en-IN"
+
+    from src.tts_engine import generate_voice_output
+    tts_audio_path = generate_voice_output(ai_response, language_code)
+    
+    # Telemetry measurements
+    turn_latency = time.time() - start_turn_time
+    vad_latency = 150.0  # mock VAD silence interruption threshold
+    
+    words_count = len(ai_response.split())
+    tokens_processed = int(words_count * 1.3)
+    if tokens_processed == 0:
+        tokens_processed = 1
+
+    # Commit Latency metrics to DB
+    database.save_telemetry(session_id, turn_latency, vad_latency, tokens_processed)
+
+    # Stream synthesized audio binary data back to client
+    if tts_audio_path and os.path.exists(tts_audio_path):
+        try:
+            with open(tts_audio_path, "rb") as f:
+                audio_bytes = f.read()
+            await websocket.send_bytes(audio_bytes)
+            
+            # Safe delete generated audio file to prevent junk accumulation
+            os.remove(tts_audio_path)
+        except Exception as e:
+            print(f"[Error] Failed to stream audio file: {e}")
