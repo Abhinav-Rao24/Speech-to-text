@@ -61,13 +61,32 @@
                     <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
                     Clear Memory
                 </button>
-                <button class="flex items-center gap-2 py-1.5 px-3 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold rounded-lg text-xs shadow-sm hover:shadow transition-all duration-200" uk-toggle="target: #voice-agent-modal">
+                <button id="initiate-voice-btn" class="flex items-center gap-2 py-1.5 px-3 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold rounded-lg text-xs shadow-sm hover:shadow transition-all duration-200" title="Initiate Voice Agent">
                     <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
                     Initiate Voice Agent
                 </button>
             </div>
             {% endif %}
         </div>
+
+        <!-- Inline Voice Visualizer (hidden by default) -->
+        {% if active_session_id %}
+        <div id="inline-voice-panel" class="hidden flex-shrink-0 border-b border-border bg-card/10 p-4 flex flex-col items-center justify-center transition-all duration-300">
+            <div class="relative w-36 h-36 flex items-center justify-center">
+                <canvas id="voiceWaveCanvas" width="200" height="200" class="w-36 h-36 bg-transparent"></canvas>
+                <!-- Central PTT button overlaying the circular canvas -->
+                <button id="ptt-mic-btn" data-session-id="{{ active_session_id }}" class="absolute w-16 h-16 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none z-10" title="Push-to-Talk (Hold to speak)">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </button>
+            </div>
+            
+            <!-- Dynamic Status Badge -->
+            <div id="agentStatus" class="mt-3 flex items-center gap-2 py-1 px-3 bg-primary/10 border border-primary/20 text-primary rounded-full text-[10px] font-bold uppercase tracking-wider w-fit">
+                <div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                <span id="portal-status-text">Status: Ready</span>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- Scrollable bubble dialog container -->
         {% if active_session_id %}
@@ -103,43 +122,6 @@
     </main>
 
 </div>
-
-<!-- STATIC VOICE AGENT PORTAL OVERLAY MODAL (Franken UI / UK-Modal Target) -->
-{% if active_session_id %}
-<div id="voice-agent-modal" class="uk-modal" uk-modal>
-    <div class="uk-modal-dialog uk-margin-auto-vertical max-w-md w-full p-8 bg-card/90 backdrop-blur-xl border border-border rounded-3xl shadow-2xl relative">
-        <!-- Close Button -->
-        <button class="uk-modal-close absolute top-5 right-5 text-muted-foreground hover:text-foreground p-1.5 rounded-full hover:bg-muted transition-all" type="button" title="Close Portal">
-            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
-        </button>
-
-        <!-- Status Badge -->
-        <div class="flex items-center gap-2 py-1.5 px-4 bg-primary/10 border border-primary/20 text-primary rounded-full text-xs font-semibold uppercase tracking-wider mb-6 w-fit mx-auto">
-            <div class="w-2.5 h-2.5 rounded-full bg-primary animate-pulse"></div>
-            <span id="portal-status-text">Voice Agent Ready</span>
-        </div>
-
-        <!-- Canvas Placeholder -->
-        <div class="w-full mb-6">
-            <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 text-center">Voice Pulse Ripple</div>
-            <div class="flex justify-center">
-                <canvas id="voiceWaveCanvas" width="400" height="400" class="w-64 h-64 bg-transparent"></canvas>
-            </div>
-        </div>
-
-        <!-- Circular PTT Microphone Action Button -->
-        <div class="flex flex-col items-center justify-center gap-4">
-            <button id="ptt-mic-btn" data-session-id="{{ active_session_id }}" class="w-20 h-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none" title="Push-to-Talk (Hold to speak)">
-                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-            </button>
-            <h3 class="text-base font-bold text-foreground">Logistics voice portal</h3>
-            <p class="text-xs text-muted-foreground text-center max-w-[260px] leading-relaxed" id="portal-help-text">
-                Press and hold the button to record your speech. Release when finished.
-            </p>
-        </div>
-    </div>
-</div>
-{% endif %}
 
 <script src="/static/js/client.js"></script>
 <script>

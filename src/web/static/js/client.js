@@ -9,15 +9,17 @@ let analyser = null;
 let animationFrameId = null;
 let isRecording = false;
 let visualizerMode = 'idle'; // 'idle', 'listening', 'speaking'
+let audioQueue = [];
+let isPlayingAudio = false;
 
-// Initialize Playback Context for Web Audio API defensively
+// Initialize Playback Context for Web Audio API defensively under user gesture
 function getPlaybackContext() {
     try {
         if (!playbackContext) {
             playbackContext = new (window.AudioContext || window.webkitAudioContext)();
         }
         if (playbackContext.state === 'suspended') {
-            playbackContext.resume().catch(err => console.warn("AudioContext resume suspended failed:", err));
+            playbackContext.resume().catch(err => console.warn("AudioContext resume failed:", err));
         }
     } catch (e) {
         console.error("Failed to initialize Web Audio playback context:", e);
@@ -36,67 +38,99 @@ function float32ToInt16(buffer) {
     return buf.buffer;
 }
 
-// Play returning binary audio chunks (WAV/MP3) via Web Audio API with AnalyserNode
-function playSynthesizedAudio(arrayBuffer) {
-    try {
-        const ctx = getPlaybackContext();
-        if (!ctx) return;
-        
-        ctx.decodeAudioData(arrayBuffer, (decodedBuffer) => {
-            try {
-                const source = ctx.createBufferSource();
-                source.buffer = decodedBuffer;
-                
-                // Set up AnalyserNode for real-time visualization frequency extraction
-                analyser = ctx.createAnalyser();
-                analyser.fftSize = 256;
-                
-                source.connect(analyser);
-                analyser.connect(ctx.destination);
-                
-                visualizerMode = 'speaking';
-                
-                const statusText = document.getElementById('portal-status-text');
-                const helpText = document.getElementById('portal-help-text');
-                const pttMicBtn = document.getElementById('ptt-mic-btn');
-                
-                if (statusText) statusText.textContent = 'Speaking...';
-                if (helpText) helpText.textContent = 'Playing logistics assistant audio response...';
-                
-                // Lock user mic controls during assistant playback
-                if (pttMicBtn) {
-                    pttMicBtn.disabled = true;
-                    pttMicBtn.classList.add('opacity-50', 'pointer-events-none');
-                }
-                
-                // Start the visualizer rendering loop
-                triggerVisualizer();
-                
-                source.onended = () => {
-                    visualizerMode = 'idle';
-                    triggerVisualizer(); // Re-draw static rings and freeze
-                    
-                    if (statusText) statusText.textContent = 'Voice Agent Ready';
-                    if (helpText) helpText.textContent = 'Press and hold the button to record your speech. Release when finished.';
-                    
-                    // Unlock user mic controls
-                    if (pttMicBtn) {
-                        pttMicBtn.disabled = false;
-                        pttMicBtn.classList.remove('opacity-50', 'pointer-events-none');
-                    }
-                    analyser = null;
-                };
-                
-                source.start(0);
-            } catch (innerErr) {
-                console.error("Playback start exception:", innerErr);
-            }
-        }, (decodeError) => {
-            console.error("Web Audio decoding failed:", decodeError);
-        });
-    } catch (e) {
-        console.error("Audio playback error:", e);
+// Convert 16-bit signed PCM to Float32 array
+function pcm16ToFloat32(arrayBuffer) {
+    const int16Array = new Int16Array(arrayBuffer);
+    const float32Array = new Float32Array(int16Array.length);
+    for (let i = 0; i < int16Array.length; i++) {
+        float32Array[i] = int16Array[i] / 32768.0;
     }
+    return float32Array;
+}
+
+// Decodes standard file payloads (WAV/MP3) or raw binary 16-bit PCM arrays
+function decodeAudioPayload(arrayBuffer, callback) {
+    const view = new DataView(arrayBuffer);
+    let isFormatFile = false;
+    if (arrayBuffer.byteLength > 4) {
+        const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
+        if (magic === 'RIFF' || magic === 'ID3\x03' || magic === 'ID3\x04' || view.getUint16(0) === 0xFFFB || view.getUint16(0) === 0xFFF3) {
+            isFormatFile = true;
+        }
+    }
+    
+    const ctx = getPlaybackContext();
+    if (!ctx) return;
+    
+    if (isFormatFile) {
+        ctx.decodeAudioData(arrayBuffer, (decodedBuffer) => {
+            callback(decodedBuffer);
+        }, (err) => {
+            console.warn("decodeAudioData failed, trying raw PCM fallback:", err);
+            const floatArray = pcm16ToFloat32(arrayBuffer);
+            const buffer = ctx.createBuffer(1, floatArray.length, 16000);
+            buffer.copyToChannel(floatArray, 0);
+            callback(buffer);
+        });
+    } else {
+        const floatArray = pcm16ToFloat32(arrayBuffer);
+        const buffer = ctx.createBuffer(1, floatArray.length, 16000);
+        buffer.copyToChannel(floatArray, 0);
+        callback(buffer);
+    }
+}
+
+// Plays returning chunks sequentially using the playback queue
+function playSynthesizedAudio(arrayBuffer) {
+    console.log("[Audio] Playing chunk of size:", arrayBuffer.byteLength);
+    decodeAudioPayload(arrayBuffer, (audioBuffer) => {
+        audioQueue.push(audioBuffer);
+        if (!isPlayingAudio) {
+            playNextInQueue();
+        }
+    });
+}
+
+// Schedules queue playback gaplessly using Web Audio source nodes
+function playNextInQueue() {
+    const ctx = getPlaybackContext();
+    const statusText = document.getElementById('portal-status-text');
+    const pttMicBtn = document.getElementById('ptt-mic-btn');
+    
+    if (!ctx || audioQueue.length === 0) {
+        isPlayingAudio = false;
+        visualizerMode = 'idle';
+        triggerVisualizer();
+        
+        if (statusText) statusText.textContent = 'Status: Ready';
+        if (pttMicBtn) {
+            pttMicBtn.disabled = false;
+            pttMicBtn.classList.remove('opacity-50', 'pointer-events-none');
+        }
+        analyser = null;
+        return;
+    }
+    
+    isPlayingAudio = true;
+    const buffer = audioQueue.shift();
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 256;
+    source.connect(analyser);
+    analyser.connect(ctx.destination);
+    
+    visualizerMode = 'speaking';
+    if (statusText) statusText.textContent = 'Status: Speaking...';
+    
+    triggerVisualizer();
+    
+    // Unlock user mic control at chunk ends
+    source.onended = () => {
+        playNextInQueue();
+    };
+    source.start(0);
 }
 
 // Appends message bubbles dynamically to timeline without page reload
@@ -140,15 +174,13 @@ function updateVisualizer() {
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     
-    // Explicit clean
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
-    const rings = [45, 80, 115, 150];
+    const rings = [25, 45, 65, 85]; // Adjusted for smaller 200x200 canvas bounds
     
     if (visualizerMode === 'speaking' && analyser) {
-        // Mode 1: SPEAKING - concentric ripples scaling reactively to Web Audio frequency
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
         analyser.getByteFrequencyData(dataArray);
@@ -158,11 +190,9 @@ function updateVisualizer() {
             sum += dataArray[i];
         }
         const average = sum / bufferLength;
-        const scale = 1.0 + (average / 128.0); // calculate dynamic scale factor
+        const scale = 1.0 + (average / 128.0);
         
         const time = Date.now() * 0.003;
-        
-        // Define overlapping emerald colors
         const colors = [
             'rgba(16, 185, 129, 0.45)', // emerald-500
             'rgba(52, 211, 153, 0.35)', // emerald-400
@@ -173,12 +203,12 @@ function updateVisualizer() {
         rings.forEach((baseRadius, index) => {
             ctx.beginPath();
             ctx.strokeStyle = colors[index % colors.length];
-            ctx.lineWidth = 2.5;
+            ctx.lineWidth = 2;
             
-            const points = 120;
+            const points = 90;
             const freq = 4 + index;
             const phase = time * (index % 2 === 0 ? 1.5 : -1.5);
-            const amp = 5 + (index * 2.5) * scale;
+            const amp = 3 + (index * 1.5) * scale;
             
             for (let i = 0; i <= points; i++) {
                 const angle = (i / points) * Math.PI * 2;
@@ -198,17 +228,16 @@ function updateVisualizer() {
         
         animationFrameId = requestAnimationFrame(updateVisualizer);
     } else {
-        // Mode 2: LISTENING or IDLE - concentric lines frozen as perfect rings
         const borderStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e5e7eb';
         
         rings.forEach((baseRadius) => {
             ctx.beginPath();
             ctx.strokeStyle = borderStyle;
-            ctx.lineWidth = 1.5;
+            ctx.lineWidth = 1.2;
             ctx.arc(centerX, centerY, baseRadius, 0, Math.PI * 2);
             ctx.stroke();
         });
-        animationFrameId = null; // Freeze loop
+        animationFrameId = null;
     }
 }
 
@@ -221,70 +250,19 @@ function triggerVisualizer() {
     updateVisualizer();
 }
 
-// Establish Web Socket and start 16kHz PCM capture
-async function startPttRecording(sessionId) {
-    if (visualizerMode === 'speaking') {
-        console.log("PTT locked: assistant speaking");
-        return; // Prevent interruptions when speaking
-    }
-    
-    if (isRecording) return;
-    isRecording = true;
-    visualizerMode = 'listening';
-
-    const pttMicBtn = document.getElementById('ptt-mic-btn');
+// Connect to persistent websocket session
+function startVoiceSession(sessionId) {
     const statusText = document.getElementById('portal-status-text');
-    const helpText = document.getElementById('portal-help-text');
-
-    if (pttMicBtn) {
-        pttMicBtn.classList.remove('bg-primary');
-        pttMicBtn.classList.add('bg-red-500');
-    }
-    if (statusText) statusText.textContent = 'Connecting...';
-
-    // Start WebSocket
+    if (statusText) statusText.textContent = 'Status: Connecting...';
+    
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
     const wsUrl = `${protocol}//${window.location.host}/ws/stream?session_id=${sessionId}`;
     socket = new WebSocket(wsUrl);
-
     socket.binaryType = 'arraybuffer';
 
-    socket.onopen = async () => {
-        if (statusText) statusText.textContent = 'Listening...';
-        if (helpText) helpText.textContent = 'Recording microphone input. Release button to submit speech.';
-
-        // Render frozen rings
+    socket.onopen = () => {
+        if (statusText) statusText.textContent = 'Status: Ready';
         triggerVisualizer();
-
-        try {
-            // Request microphone access
-            mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            
-            try {
-                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-            } catch (ctxErr) {
-                console.error("Capture AudioContext creation failed:", ctxErr);
-                throw ctxErr;
-            }
-            
-            const source = audioContext.createMediaStreamSource(mediaStream);
-            scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
-
-            scriptProcessor.onaudioprocess = (e) => {
-                if (socket.readyState !== WebSocket.OPEN) return;
-                const inputData = e.inputBuffer.getChannelData(0);
-                const int16Buffer = float32ToInt16(inputData);
-                socket.send(int16Buffer);
-            };
-
-            source.connect(scriptProcessor);
-            scriptProcessor.connect(audioContext.destination);
-        } catch (err) {
-            console.error("Microphone capture failed:", err);
-            if (statusText) statusText.textContent = 'Mic Error';
-            if (helpText) helpText.textContent = 'Could not access microphone. Ensure permissions are granted.';
-            stopPttRecording();
-        }
     };
 
     socket.onmessage = (event) => {
@@ -294,22 +272,81 @@ async function startPttRecording(sessionId) {
                 appendMessageBubble(msg.sender, msg.text);
             }
         } else {
-            // Binary audio bytes returned from TTS
+            // Decodes and queues assistant synthesized audio chunks
             playSynthesizedAudio(event.data);
         }
     };
 
     socket.onerror = (err) => {
-        console.error("WebSocket Pipeline Error:", err);
+        console.error("Voice Session WebSocket error:", err);
     };
 
     socket.onclose = () => {
-        console.log("WebSocket Closed");
-        cleanupMicrophone();
+        console.log("Voice Session WebSocket closed");
+        if (statusText) statusText.textContent = 'Status: Ready';
+        triggerVisualizer();
     };
 }
 
-// Stop recording and send stop signal
+// Disconnect persistent voice session
+function closeVoiceSession() {
+    if (socket) {
+        socket.close();
+        socket = null;
+    }
+    visualizerMode = 'idle';
+    audioQueue = [];
+    isPlayingAudio = false;
+    triggerVisualizer();
+}
+
+// Capture mic PCM stream when holding PTT button
+async function startPttRecording() {
+    if (visualizerMode === 'speaking') {
+        console.log("PTT locked: assistant speaking");
+        return;
+    }
+    
+    if (isRecording) return;
+    isRecording = true;
+    visualizerMode = 'listening';
+
+    const pttMicBtn = document.getElementById('ptt-mic-btn');
+    const statusText = document.getElementById('portal-status-text');
+
+    if (pttMicBtn) {
+        pttMicBtn.classList.remove('bg-primary');
+        pttMicBtn.classList.add('bg-red-500');
+    }
+    if (statusText) statusText.textContent = 'Status: Listening...';
+
+    triggerVisualizer();
+
+    try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+        
+        const source = audioContext.createMediaStreamSource(mediaStream);
+        scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
+
+        scriptProcessor.onaudioprocess = (e) => {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                const inputData = e.inputBuffer.getChannelData(0);
+                const int16Buffer = float32ToInt16(inputData);
+                socket.send(int16Buffer);
+            }
+        };
+
+        source.connect(scriptProcessor);
+        scriptProcessor.connect(audioContext.destination);
+    } catch (err) {
+        console.error("Microphone capture failed:", err);
+        if (statusText) statusText.textContent = 'Status: Mic Error';
+        stopPttRecording();
+    }
+}
+
+// Stop mic capture and stream stop recording frame
 function stopPttRecording() {
     if (!isRecording) return;
     isRecording = false;
@@ -317,16 +354,13 @@ function stopPttRecording() {
 
     const pttMicBtn = document.getElementById('ptt-mic-btn');
     const statusText = document.getElementById('portal-status-text');
-    const helpText = document.getElementById('portal-help-text');
 
     if (pttMicBtn) {
         pttMicBtn.classList.remove('bg-red-500');
         pttMicBtn.classList.add('bg-primary');
     }
-    if (statusText) statusText.textContent = 'Processing...';
-    if (helpText) helpText.textContent = 'Running pipeline elements...';
+    if (statusText) statusText.textContent = 'Status: Thinking...';
 
-    // Clear wave visualization back to flat rings
     triggerVisualizer();
 
     if (socket && socket.readyState === WebSocket.OPEN) {
@@ -336,7 +370,7 @@ function stopPttRecording() {
     cleanupMicrophone();
 }
 
-// Release microphone capture handles
+// Release mic capture tracks
 function cleanupMicrophone() {
     if (scriptProcessor) {
         scriptProcessor.disconnect();
@@ -352,7 +386,7 @@ function cleanupMicrophone() {
     }
 }
 
-// Draw static concentric rings on load
+// Draw base visualizer concentric lines
 function drawBaseline(canvas, ctx) {
     visualizerMode = 'idle';
     triggerVisualizer();
@@ -377,18 +411,13 @@ async function clearConversationalMemoryAJAX(sessionId) {
         if (response.ok) {
             const data = await response.json();
             if (data.status === 'reset') {
-                // Clear all chat bubbles in timeline instantly
                 if (messagesPanel) {
                     messagesPanel.innerHTML = '';
                 }
-                // Append fresh greeting
                 if (data.greeting) {
                     appendMessageBubble('assistant', data.greeting);
                 }
-                // Update live slots widgets in conversations side panel if present
-                if (workflowBadge) {
-                    workflowBadge.textContent = 'IDLE';
-                }
+                if (workflowBadge) workflowBadge.textContent = 'IDLE';
                 if (trackingSlot) trackingSlot.textContent = 'Not collected';
                 if (locationSlot) locationSlot.textContent = 'Not collected';
                 if (dateSlot) dateSlot.textContent = 'Not collected';
@@ -405,7 +434,7 @@ async function clearConversationalMemoryAJAX(sessionId) {
 
 // Enforce strict DOMContentLoaded initialization and event registration
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Initialize canvas waveform visualizer if present on page
+    // 1. Initialize canvas concentric rings if present
     const canvas = document.getElementById('voiceWaveCanvas');
     if (canvas) {
         const ctx = canvas.getContext('2d');
@@ -418,14 +447,50 @@ document.addEventListener('DOMContentLoaded', () => {
         drawBaseline(canvas, ctx);
     }
 
-    // 2. Bind event listeners to PTT button if present
+    // 2. Bind Initiate Voice Agent toggle trigger to manage panel expansion & WebSocket
+    const initiateBtn = document.getElementById('initiate-voice-btn');
+    const voicePanel = document.getElementById('inline-voice-panel');
+    
+    if (initiateBtn && voicePanel) {
+        initiateBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            
+            // Unlock Web Audio context on user gesture
+            getPlaybackContext();
+            
+            if (voicePanel.classList.contains('hidden')) {
+                voicePanel.classList.remove('hidden');
+                initiateBtn.classList.remove('bg-primary');
+                initiateBtn.classList.add('bg-red-600');
+                initiateBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+                    Terminate Voice Agent
+                `;
+                
+                const pttMicBtn = document.getElementById('ptt-mic-btn');
+                const sessionId = pttMicBtn ? pttMicBtn.getAttribute('data-session-id') : '';
+                startVoiceSession(sessionId);
+            } else {
+                voicePanel.classList.add('hidden');
+                initiateBtn.classList.remove('bg-red-600');
+                initiateBtn.classList.add('bg-primary');
+                initiateBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                    Initiate Voice Agent
+                `;
+                closeVoiceSession();
+            }
+        });
+    }
+
+    // 3. Bind PTT button start/stop recording listeners
     const pttMicBtn = document.getElementById('ptt-mic-btn');
     if (pttMicBtn) {
-        const sessionId = pttMicBtn.getAttribute('data-session-id') || '';
-        
         const handleStart = (e) => {
             e.preventDefault();
-            startPttRecording(sessionId);
+            // Unlock Web Audio context defensively
+            getPlaybackContext();
+            startPttRecording();
         };
         
         const handleStop = (e) => {

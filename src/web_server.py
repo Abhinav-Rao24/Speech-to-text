@@ -437,6 +437,43 @@ async def websocket_stream(websocket: WebSocket, session_id: str):
 
     await websocket.accept()
     
+    # Dynamic Context-Aware Welcome Greeting processing
+    messages = database.get_session_messages(session_id)
+    if len(messages) == 0:
+        # Standard welcome greeting for fresh sessions
+        greeting_text = "Hello! Welcome to Colaberry Logistics Support. How may I assist you today?"
+    else:
+        # Compile dynamic greeting incorporating resolved slots
+        slots_list = []
+        if session_data.get("tracking_id"):
+            slots_list.append(f"tracking your shipment {session_data['tracking_id']}")
+        elif session_data.get("pickup_location"):
+            slots_list.append(f"scheduling your pickup at {session_data['pickup_location']}")
+            
+        if slots_list:
+            greeting_text = f"Welcome back! Would you like to continue {slots_list[0]}, or do you need help with something else?"
+        else:
+            greeting_text = "Welcome back! I see we were recently working on your logistics request. Would you like to continue where we left off, or do you need help with something else today?"
+            
+    # Guard against duplicate welcome logs
+    if not messages or messages[-1]["text"] != greeting_text:
+        database.save_message(session_id, "assistant", greeting_text)
+        
+    # Send transcript immediately to user screen
+    await websocket.send_json({"type": "transcript", "sender": "assistant", "text": greeting_text})
+    
+    # Generate and stream greeting voice audio instantly
+    from src.tts_engine import generate_voice_output
+    tts_audio_path = generate_voice_output(greeting_text, "en-IN")
+    if tts_audio_path and os.path.exists(tts_audio_path):
+        try:
+            with open(tts_audio_path, "rb") as f:
+                audio_bytes = f.read()
+            await websocket.send_bytes(audio_bytes)
+            os.remove(tts_audio_path)
+        except Exception as e:
+            print(f"[Error] Failed to stream welcome greeting audio: {e}")
+
     pcm_data = bytearray()
     
     try:
