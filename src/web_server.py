@@ -172,9 +172,76 @@ async def telemetry(request: Request, session_id: str = None):
     sessions = database.get_user_sessions(user["id"])
     
     active_session = None
+    avg_vad_ms = 0.0
+    avg_turn_ms = 0.0
+    avg_bandwidth = 0.0
+    audit_logs = []
+    
     if session_id:
         active_session = database.get_session(session_id)
-        if not active_session or active_session["user_id"] != user["id"]:
+        if active_session and active_session["user_id"] == user["id"]:
+            # Query aggregates with COALESCE to prevent crash on NULL values
+            conn = database.get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT 
+                    COALESCE(AVG(turn_latency), 0.0) as avg_turn,
+                    COALESCE(AVG(vad_latency), 0.0) as avg_vad,
+                    COALESCE(SUM(tokens_processed), 0.0) as total_tokens,
+                    COALESCE(SUM(turn_latency), 0.0) as total_latency
+                FROM telemetrics
+                WHERE session_id = ?
+            """, (session_id,))
+            metrics = cursor.fetchone()
+            
+            if metrics:
+                avg_turn_ms = round(metrics["avg_turn"] * 1000, 1)
+                avg_vad_ms = round(metrics["avg_vad"], 1)
+                total_tokens = metrics["total_tokens"]
+                total_latency = metrics["total_latency"]
+                avg_bandwidth = round(total_tokens / total_latency, 1) if total_latency > 0 else 0.0
+                
+            # Retrieve message transition states for System Audit Log
+            cursor.execute("""
+                SELECT sender, text, timestamp
+                FROM messages
+                WHERE session_id = ?
+                ORDER BY timestamp ASC;
+            """, (session_id,))
+            msg_rows = cursor.fetchall()
+            conn.close()
+            
+            curr_workflow = "NONE"
+            for msg in msg_rows:
+                text_val = msg["text"].lower()
+                event_type = "User Speech Captured" if msg["sender"] == "user" else "Assistant Response Synthesized"
+                
+                # Dynamic intent classification mapping
+                intent = "unknown"
+                if msg["sender"] == "user":
+                    if "track" in text_val or "shipment" in text_val or "status" in text_val:
+                        intent = "track_shipment"
+                        curr_workflow = "TRACKING"
+                    elif "pickup" in text_val or "schedule" in text_val or "book" in text_val:
+                        intent = "schedule_pickup"
+                        curr_workflow = "PICKUP"
+                    elif "delay" in text_val:
+                        intent = "shipment_delay"
+                        curr_workflow = "DELAY"
+                    elif "hello" in text_val or "hi" in text_val:
+                        intent = "greeting"
+                        
+                    state_info = f"Intent: {intent} | Workflow: {curr_workflow}"
+                else:
+                    state_info = f"Workflow: {curr_workflow}"
+                    
+                audit_logs.append({
+                    "timestamp": msg["timestamp"],
+                    "event": event_type,
+                    "detail": msg["text"],
+                    "state": state_info
+                })
+        else:
             active_session = None
             session_id = None
             
@@ -186,7 +253,11 @@ async def telemetry(request: Request, session_id: str = None):
             "sessions": sessions,
             "active_session": active_session,
             "active_session_id": session_id,
-            "theme_class": theme_class
+            "theme_class": theme_class,
+            "avg_turn_ms": avg_turn_ms,
+            "avg_vad_ms": avg_vad_ms,
+            "avg_bandwidth": avg_bandwidth,
+            "audit_logs": audit_logs
         }
     )
 
@@ -308,6 +379,40 @@ async def send_chat_message(request: Request, session_id: str, text: str = Form(
         conn.close()
         
     return RedirectResponse(url=f"/conversations?session_id={session_id}", status_code=303)
+
+
+@app.post("/session/clear/{session_id}")
+async def clear_session_memory(request: Request, session_id: str):
+    """Resets conversational history, clears telemetrics, and resets slots to NULL."""
+    user = request.session.get("user")
+    if not user:
+        raise HTTPException(status_code=401, detail="Unauthorized")
+        
+    session_data = database.get_session(session_id)
+    if not session_data or session_data["user_id"] != user["id"]:
+        raise HTTPException(status_code=403, detail="Forbidden")
+        
+    # Clear dialogue and telemetrics database rows
+    conn = database.get_db_connection()
+    conn.execute("DELETE FROM messages WHERE session_id = ?;", (session_id,))
+    conn.execute("DELETE FROM telemetrics WHERE session_id = ?;", (session_id,))
+    
+    # Reset chat_sessions logistics state back to default NULLs and workflow back to 'IDLE'
+    conn.execute("""
+        UPDATE chat_sessions
+        SET workflow = 'IDLE', tracking_id = NULL, pickup_location = NULL, pickup_date = NULL, name = 'New Chat'
+        WHERE session_id = ?;
+    """, (session_id,))
+    
+    # Save a fresh logistics greeting
+    manager = ConversationManager()
+    greeting = manager.initiate_conversation()
+    conn.execute("INSERT INTO messages (session_id, sender, text) VALUES (?, 'assistant', ?);", (session_id, greeting))
+    
+    conn.commit()
+    conn.close()
+    
+    return {"status": "reset", "greeting": greeting}
 
 
 @app.websocket("/ws/stream")

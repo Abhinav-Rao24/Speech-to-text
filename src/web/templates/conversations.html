@@ -56,10 +56,16 @@
             </div>
             
             {% if active_session %}
-            <button class="flex items-center gap-2 py-1.5 px-3 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold rounded-lg text-xs shadow-sm hover:shadow transition-all duration-200" uk-toggle="target: #voice-agent-modal">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
-                Initiate Voice Agent
-            </button>
+            <div class="flex items-center gap-2">
+                <button type="button" onclick="clearConversationalMemoryAJAX('{{ active_session_id }}')" class="flex items-center gap-1.5 py-1.5 px-3 border border-red-500/30 hover:border-red-500 text-red-500 hover:bg-red-500/10 font-semibold rounded-lg text-xs transition-all duration-200" title="Clear chat history and reset slots">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18m-2 0v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6m3 0V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"></path></svg>
+                    Clear Memory
+                </button>
+                <button class="flex items-center gap-2 py-1.5 px-3 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold rounded-lg text-xs shadow-sm hover:shadow transition-all duration-200" uk-toggle="target: #voice-agent-modal">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                    Initiate Voice Agent
+                </button>
+            </div>
             {% endif %}
         </div>
 
@@ -115,8 +121,10 @@
 
         <!-- Canvas Placeholder -->
         <div class="w-full mb-6">
-            <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 text-left">Microphone Waveform</div>
-            <canvas id="voiceWaveCanvas" class="w-full h-24 bg-muted/40 border border-border/60 rounded-xl shadow-inner"></canvas>
+            <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 text-center">Voice Pulse Ripple</div>
+            <div class="flex justify-center">
+                <canvas id="voiceWaveCanvas" width="400" height="400" class="w-64 h-64 bg-transparent"></canvas>
+            </div>
         </div>
 
         <!-- Circular PTT Microphone Action Button -->

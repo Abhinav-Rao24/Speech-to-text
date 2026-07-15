@@ -5,8 +5,10 @@ let mediaStream = null;
 let scriptProcessor = null;
 let socket = null;
 let playbackContext = null;
+let analyser = null;
 let animationFrameId = null;
 let isRecording = false;
+let visualizerMode = 'idle'; // 'idle', 'listening', 'speaking'
 
 // Initialize Playback Context for Web Audio API
 function getPlaybackContext() {
@@ -30,23 +32,52 @@ function float32ToInt16(buffer) {
     return buf.buffer;
 }
 
-// Play returning binary audio chunks (WAV/MP3) via Web Audio API
+// Play returning binary audio chunks (WAV/MP3) via Web Audio API with AnalyserNode
 function playSynthesizedAudio(arrayBuffer) {
     try {
         const ctx = getPlaybackContext();
         ctx.decodeAudioData(arrayBuffer, (decodedBuffer) => {
             const source = ctx.createBufferSource();
             source.buffer = decodedBuffer;
-            source.connect(ctx.destination);
+            
+            // Set up AnalyserNode for real-time visualization frequency extraction
+            analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            
+            source.connect(analyser);
+            analyser.connect(ctx.destination);
+            
+            visualizerMode = 'speaking';
             
             const statusText = document.getElementById('portal-status-text');
             const helpText = document.getElementById('portal-help-text');
+            const pttMicBtn = document.getElementById('ptt-mic-btn');
+            
             if (statusText) statusText.textContent = 'Speaking...';
             if (helpText) helpText.textContent = 'Playing logistics assistant audio response...';
             
+            // Lock user mic controls during assistant playback
+            if (pttMicBtn) {
+                pttMicBtn.disabled = true;
+                pttMicBtn.classList.add('opacity-50', 'pointer-events-none');
+            }
+            
+            // Start the visualizer rendering loop
+            triggerVisualizer();
+            
             source.onended = () => {
+                visualizerMode = 'idle';
+                triggerVisualizer(); // Re-draw static rings and freeze
+                
                 if (statusText) statusText.textContent = 'Voice Agent Ready';
                 if (helpText) helpText.textContent = 'Press and hold the button to record your speech. Release when finished.';
+                
+                // Unlock user mic controls
+                if (pttMicBtn) {
+                    pttMicBtn.disabled = false;
+                    pttMicBtn.classList.remove('opacity-50', 'pointer-events-none');
+                }
+                analyser = null;
             };
             
             source.start(0);
@@ -93,54 +124,107 @@ function appendMessageBubble(sender, text) {
     messagesPanel.scrollTop = messagesPanel.scrollHeight;
 }
 
-// Draw real-time mock mic input waves on canvas when active
-function drawWaveform(canvas, ctx) {
-    if (!isRecording) return;
+// Circular "thread wave" concentric visualizer loop
+function updateVisualizer() {
+    const canvas = document.getElementById('voiceWaveCanvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
     
+    // Explicit clean
     ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#10b981'; // emerald theme green
-    ctx.lineWidth = 2;
-    ctx.beginPath();
     
-    const midY = canvas.height / (2 * window.devicePixelRatio);
-    const width = canvas.width / window.devicePixelRatio;
-    ctx.moveTo(0, midY);
+    const centerX = canvas.width / 2;
+    const centerY = canvas.height / 2;
+    const rings = [45, 80, 115, 150];
     
-    const time = Date.now() * 0.015;
-    for (let x = 0; x < width; x++) {
-        // Generate random-looking sin/cos waves scaled to mimic sound activity
-        const wave = Math.sin(x * 0.06 + time) * Math.cos(x * 0.02) * (8 + Math.random() * 4);
-        ctx.lineTo(x, midY + wave);
+    if (visualizerMode === 'speaking' && analyser) {
+        // Mode 1: SPEAKING - concentric ripples scaling reactively to Web Audio frequency
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteFrequencyData(dataArray);
+        
+        let sum = 0;
+        for (let i = 0; i < bufferLength; i++) {
+            sum += dataArray[i];
+        }
+        const average = sum / bufferLength;
+        const scale = 1.0 + (average / 128.0); // calculate dynamic scale factor
+        
+        const time = Date.now() * 0.003;
+        
+        // Define overlapping emerald colors
+        const colors = [
+            'rgba(16, 185, 129, 0.45)', // emerald-500
+            'rgba(52, 211, 153, 0.35)', // emerald-400
+            'rgba(110, 231, 183, 0.3)',  // emerald-300
+            'rgba(5, 150, 105, 0.3)'     // emerald-600
+        ];
+        
+        rings.forEach((baseRadius, index) => {
+            ctx.beginPath();
+            ctx.strokeStyle = colors[index % colors.length];
+            ctx.lineWidth = 2.5;
+            
+            const points = 120;
+            const freq = 4 + index;
+            const phase = time * (index % 2 === 0 ? 1.5 : -1.5);
+            const amp = 5 + (index * 2.5) * scale;
+            
+            for (let i = 0; i <= points; i++) {
+                const angle = (i / points) * Math.PI * 2;
+                const r_offset = Math.sin(angle * freq + phase) * amp * scale;
+                const r = baseRadius + r_offset;
+                const x = centerX + r * Math.cos(angle + time * 0.05);
+                const y = centerY + r * Math.sin(angle + time * 0.05);
+                if (i === 0) {
+                    ctx.moveTo(x, y);
+                } else {
+                    ctx.lineTo(x, y);
+                }
+            }
+            ctx.closePath();
+            ctx.stroke();
+        });
+        
+        animationFrameId = requestAnimationFrame(updateVisualizer);
+    } else {
+        // Mode 2: LISTENING or IDLE - concentric lines frozen as perfect rings
+        const borderStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e5e7eb';
+        
+        rings.forEach((baseRadius) => {
+            ctx.beginPath();
+            ctx.strokeStyle = borderStyle;
+            ctx.lineWidth = 1.5;
+            ctx.arc(centerX, centerY, baseRadius, 0, Math.PI * 2);
+            ctx.stroke();
+        });
+        animationFrameId = null; // Freeze loop
     }
-    
-    ctx.stroke();
-    animationFrameId = requestAnimationFrame(() => drawWaveform(canvas, ctx));
 }
 
-// Clear visual canvas waves and draw a flat baseline
-function drawBaseline(canvas, ctx) {
+// Trigger loop updates
+function triggerVisualizer() {
     if (animationFrameId) {
         cancelAnimationFrame(animationFrameId);
+        animationFrameId = null;
     }
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e5e7eb';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    const midY = canvas.height / (2 * window.devicePixelRatio);
-    ctx.moveTo(0, midY);
-    ctx.lineTo(canvas.width / window.devicePixelRatio, midY);
-    ctx.stroke();
+    updateVisualizer();
 }
 
 // Establish Web Socket and start 16kHz PCM capture
 async function startPttRecording(sessionId) {
+    if (visualizerMode === 'speaking') {
+        console.log("PTT locked: assistant speaking");
+        return; // Prevent interruptions when speaking
+    }
+    
     if (isRecording) return;
     isRecording = true;
+    visualizerMode = 'listening';
 
     const pttMicBtn = document.getElementById('ptt-mic-btn');
     const statusText = document.getElementById('portal-status-text');
     const helpText = document.getElementById('portal-help-text');
-    const canvas = document.getElementById('voiceWaveCanvas');
 
     if (pttMicBtn) {
         pttMicBtn.classList.remove('bg-primary');
@@ -159,11 +243,8 @@ async function startPttRecording(sessionId) {
         if (statusText) statusText.textContent = 'Listening...';
         if (helpText) helpText.textContent = 'Recording microphone input. Release button to submit speech.';
 
-        // Canvas animation
-        if (canvas) {
-            const ctx = canvas.getContext('2d');
-            drawWaveform(canvas, ctx);
-        }
+        // Render frozen rings
+        triggerVisualizer();
 
         try {
             // Request microphone access
@@ -171,7 +252,6 @@ async function startPttRecording(sessionId) {
             audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
             
             const source = audioContext.createMediaStreamSource(mediaStream);
-            // ScriptProcessor with 2048 buffer size, 1 input channel, 1 output channel
             scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
 
             scriptProcessor.onaudioprocess = (e) => {
@@ -217,11 +297,11 @@ async function startPttRecording(sessionId) {
 function stopPttRecording() {
     if (!isRecording) return;
     isRecording = false;
+    visualizerMode = 'idle';
 
     const pttMicBtn = document.getElementById('ptt-mic-btn');
     const statusText = document.getElementById('portal-status-text');
     const helpText = document.getElementById('portal-help-text');
-    const canvas = document.getElementById('voiceWaveCanvas');
 
     if (pttMicBtn) {
         pttMicBtn.classList.remove('bg-red-500');
@@ -230,11 +310,8 @@ function stopPttRecording() {
     if (statusText) statusText.textContent = 'Processing...';
     if (helpText) helpText.textContent = 'Running pipeline elements...';
 
-    // Clear wave visualization
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        drawBaseline(canvas, ctx);
-    }
+    // Clear wave visualization back to flat rings
+    triggerVisualizer();
 
     if (socket && socket.readyState === WebSocket.OPEN) {
         socket.send(JSON.stringify({ type: "stop_recording" }));
@@ -256,5 +333,56 @@ function cleanupMicrophone() {
     if (audioContext) {
         audioContext.close();
         audioContext = null;
+    }
+}
+
+// Draw static concentric rings on load
+function drawBaseline(canvas, ctx) {
+    visualizerMode = 'idle';
+    triggerVisualizer();
+}
+
+// AJAX-based Reset of Conversational Memory without page reload
+async function clearConversationalMemoryAJAX(sessionId) {
+    const messagesPanel = document.getElementById('messages-panel');
+    const workflowBadge = document.getElementById('workflow-badge');
+    const trackingSlot = document.getElementById('tracking-slot');
+    const locationSlot = document.getElementById('location-slot');
+    const dateSlot = document.getElementById('date-slot');
+    
+    try {
+        const response = await fetch(`/session/clear/${sessionId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+        
+        if (response.ok) {
+            const data = await response.json();
+            if (data.status === 'reset') {
+                // Clear all chat bubbles in timeline instantly
+                if (messagesPanel) {
+                    messagesPanel.innerHTML = '';
+                }
+                // Append fresh greeting
+                if (data.greeting) {
+                    appendMessageBubble('assistant', data.greeting);
+                }
+                // Update live slots widgets in conversations side panel if present
+                if (workflowBadge) {
+                    workflowBadge.textContent = 'IDLE';
+                }
+                if (trackingSlot) trackingSlot.textContent = 'Not collected';
+                if (locationSlot) locationSlot.textContent = 'Not collected';
+                if (dateSlot) dateSlot.textContent = 'Not collected';
+                
+                console.log("Session memory reset completed successfully");
+            }
+        } else {
+            console.error("Failed to reset session memory:", response.statusText);
+        }
+    } catch (e) {
+        console.error("AJAX Reset failed:", e);
     }
 }
