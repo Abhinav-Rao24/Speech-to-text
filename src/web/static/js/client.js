@@ -10,13 +10,17 @@ let animationFrameId = null;
 let isRecording = false;
 let visualizerMode = 'idle'; // 'idle', 'listening', 'speaking'
 
-// Initialize Playback Context for Web Audio API
+// Initialize Playback Context for Web Audio API defensively
 function getPlaybackContext() {
-    if (!playbackContext) {
-        playbackContext = new (window.AudioContext || window.webkitAudioContext)();
-    }
-    if (playbackContext.state === 'suspended') {
-        playbackContext.resume();
+    try {
+        if (!playbackContext) {
+            playbackContext = new (window.AudioContext || window.webkitAudioContext)();
+        }
+        if (playbackContext.state === 'suspended') {
+            playbackContext.resume().catch(err => console.warn("AudioContext resume suspended failed:", err));
+        }
+    } catch (e) {
+        console.error("Failed to initialize Web Audio playback context:", e);
     }
     return playbackContext;
 }
@@ -36,51 +40,57 @@ function float32ToInt16(buffer) {
 function playSynthesizedAudio(arrayBuffer) {
     try {
         const ctx = getPlaybackContext();
+        if (!ctx) return;
+        
         ctx.decodeAudioData(arrayBuffer, (decodedBuffer) => {
-            const source = ctx.createBufferSource();
-            source.buffer = decodedBuffer;
-            
-            // Set up AnalyserNode for real-time visualization frequency extraction
-            analyser = ctx.createAnalyser();
-            analyser.fftSize = 256;
-            
-            source.connect(analyser);
-            analyser.connect(ctx.destination);
-            
-            visualizerMode = 'speaking';
-            
-            const statusText = document.getElementById('portal-status-text');
-            const helpText = document.getElementById('portal-help-text');
-            const pttMicBtn = document.getElementById('ptt-mic-btn');
-            
-            if (statusText) statusText.textContent = 'Speaking...';
-            if (helpText) helpText.textContent = 'Playing logistics assistant audio response...';
-            
-            // Lock user mic controls during assistant playback
-            if (pttMicBtn) {
-                pttMicBtn.disabled = true;
-                pttMicBtn.classList.add('opacity-50', 'pointer-events-none');
-            }
-            
-            // Start the visualizer rendering loop
-            triggerVisualizer();
-            
-            source.onended = () => {
-                visualizerMode = 'idle';
-                triggerVisualizer(); // Re-draw static rings and freeze
+            try {
+                const source = ctx.createBufferSource();
+                source.buffer = decodedBuffer;
                 
-                if (statusText) statusText.textContent = 'Voice Agent Ready';
-                if (helpText) helpText.textContent = 'Press and hold the button to record your speech. Release when finished.';
+                // Set up AnalyserNode for real-time visualization frequency extraction
+                analyser = ctx.createAnalyser();
+                analyser.fftSize = 256;
                 
-                // Unlock user mic controls
+                source.connect(analyser);
+                analyser.connect(ctx.destination);
+                
+                visualizerMode = 'speaking';
+                
+                const statusText = document.getElementById('portal-status-text');
+                const helpText = document.getElementById('portal-help-text');
+                const pttMicBtn = document.getElementById('ptt-mic-btn');
+                
+                if (statusText) statusText.textContent = 'Speaking...';
+                if (helpText) helpText.textContent = 'Playing logistics assistant audio response...';
+                
+                // Lock user mic controls during assistant playback
                 if (pttMicBtn) {
-                    pttMicBtn.disabled = false;
-                    pttMicBtn.classList.remove('opacity-50', 'pointer-events-none');
+                    pttMicBtn.disabled = true;
+                    pttMicBtn.classList.add('opacity-50', 'pointer-events-none');
                 }
-                analyser = null;
-            };
-            
-            source.start(0);
+                
+                // Start the visualizer rendering loop
+                triggerVisualizer();
+                
+                source.onended = () => {
+                    visualizerMode = 'idle';
+                    triggerVisualizer(); // Re-draw static rings and freeze
+                    
+                    if (statusText) statusText.textContent = 'Voice Agent Ready';
+                    if (helpText) helpText.textContent = 'Press and hold the button to record your speech. Release when finished.';
+                    
+                    // Unlock user mic controls
+                    if (pttMicBtn) {
+                        pttMicBtn.disabled = false;
+                        pttMicBtn.classList.remove('opacity-50', 'pointer-events-none');
+                    }
+                    analyser = null;
+                };
+                
+                source.start(0);
+            } catch (innerErr) {
+                console.error("Playback start exception:", innerErr);
+            }
         }, (decodeError) => {
             console.error("Web Audio decoding failed:", decodeError);
         });
@@ -249,7 +259,13 @@ async function startPttRecording(sessionId) {
         try {
             // Request microphone access
             mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
-            audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+            } catch (ctxErr) {
+                console.error("Capture AudioContext creation failed:", ctxErr);
+                throw ctxErr;
+            }
             
             const source = audioContext.createMediaStreamSource(mediaStream);
             scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
@@ -386,3 +402,48 @@ async function clearConversationalMemoryAJAX(sessionId) {
         console.error("AJAX Reset failed:", e);
     }
 }
+
+// Enforce strict DOMContentLoaded initialization and event registration
+document.addEventListener('DOMContentLoaded', () => {
+    // 1. Initialize canvas waveform visualizer if present on page
+    const canvas = document.getElementById('voiceWaveCanvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        const resizeCanvas = () => {
+            canvas.width = canvas.clientWidth * window.devicePixelRatio;
+            canvas.height = canvas.clientHeight * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        };
+        resizeCanvas();
+        drawBaseline(canvas, ctx);
+    }
+
+    // 2. Bind event listeners to PTT button if present
+    const pttMicBtn = document.getElementById('ptt-mic-btn');
+    if (pttMicBtn) {
+        const sessionId = pttMicBtn.getAttribute('data-session-id') || '';
+        
+        const handleStart = (e) => {
+            e.preventDefault();
+            startPttRecording(sessionId);
+        };
+        
+        const handleStop = (e) => {
+            e.preventDefault();
+            stopPttRecording();
+        };
+
+        pttMicBtn.addEventListener('mousedown', handleStart);
+        pttMicBtn.addEventListener('mouseup', handleStop);
+        pttMicBtn.addEventListener('mouseleave', handleStop);
+
+        pttMicBtn.addEventListener('touchstart', handleStart);
+        pttMicBtn.addEventListener('touchend', handleStop);
+    }
+
+    // Expose handlers to global window scope defensively
+    window.startPttRecording = startPttRecording;
+    window.stopPttRecording = stopPttRecording;
+    window.clearConversationalMemoryAJAX = clearConversationalMemoryAJAX;
+    window.drawBaseline = drawBaseline;
+});

@@ -106,7 +106,7 @@
 
 <!-- STATIC VOICE AGENT PORTAL OVERLAY MODAL (Franken UI / UK-Modal Target) -->
 {% if active_session_id %}
-<div id="voice-agent-modal" class="uk-modal flex items-center justify-center" uk-modal>
+<div id="voice-agent-modal" class="uk-modal" uk-modal>
     <div class="uk-modal-dialog uk-margin-auto-vertical max-w-md w-full p-8 bg-card/90 backdrop-blur-xl border border-border rounded-3xl shadow-2xl relative">
         <!-- Close Button -->
         <button class="uk-modal-close absolute top-5 right-5 text-muted-foreground hover:text-foreground p-1.5 rounded-full hover:bg-muted transition-all" type="button" title="Close Portal">
@@ -129,7 +129,7 @@
 
         <!-- Circular PTT Microphone Action Button -->
         <div class="flex flex-col items-center justify-center gap-4">
-            <button id="ptt-mic-btn" class="w-20 h-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none" title="Push-to-Talk (Hold to speak)">
+            <button id="ptt-mic-btn" data-session-id="{{ active_session_id }}" class="w-20 h-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none" title="Push-to-Talk (Hold to speak)">
                 <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
             </button>
             <h3 class="text-base font-bold text-foreground">Logistics voice portal</h3>
@@ -163,43 +163,6 @@
                 sidebarContainer.classList.add('w-[280px]', 'opacity-100');
             }
         });
-    }
-
-    // Canvas drawing initialization for waveform baseline
-    const canvas = document.getElementById('voiceWaveCanvas');
-    if (canvas) {
-        const ctx = canvas.getContext('2d');
-        const resizeCanvas = () => {
-            canvas.width = canvas.clientWidth * window.devicePixelRatio;
-            canvas.height = canvas.clientHeight * window.devicePixelRatio;
-            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
-        };
-        
-        resizeCanvas();
-        drawBaseline(canvas, ctx);
-    }
-
-    // Wire up standard real-time PTT event handlers to our client.js engine
-    const pttMicBtn = document.getElementById('ptt-mic-btn');
-    if (pttMicBtn) {
-        const activeSessionId = '{{ active_session_id }}';
-        
-        const handleStart = (e) => {
-            e.preventDefault();
-            startPttRecording(activeSessionId);
-        };
-        
-        const handleStop = (e) => {
-            e.preventDefault();
-            stopPttRecording();
-        };
-
-        pttMicBtn.addEventListener('mousedown', handleStart);
-        pttMicBtn.addEventListener('mouseup', handleStop);
-        pttMicBtn.addEventListener('mouseleave', handleStop);
-
-        pttMicBtn.addEventListener('touchstart', handleStart);
-        pttMicBtn.addEventListener('touchend', handleStop);
     }
 </script>
 {% endblock %}
