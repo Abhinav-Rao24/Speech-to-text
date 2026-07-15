@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en" class="{{ theme_class }}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Colaberry Logistics Voice Assistant{% endblock %}</title>
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Franken UI v2.1.2 CSS CDN -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/franken-ui@2.1.2/dist/css/core.min.css" />
+    
+    <!-- Custom Style Overrides -->
+    <link rel="stylesheet" href="/static/css/style.css" />
+    
+    <!-- Configure Tailwind to match our CSS HSL variables -->
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        border: 'hsl(var(--border))',
+                        input: 'hsl(var(--input))',
+                        ring: 'hsl(var(--ring))',
+                        background: 'hsl(var(--background))',
+                        foreground: 'hsl(var(--foreground))',
+                        primary: {
+                            DEFAULT: 'hsl(var(--primary))',
+                            foreground: 'hsl(var(--primary-foreground))',
+                        },
+                        secondary: {
+                            DEFAULT: 'hsl(var(--secondary))',
+                            foreground: 'hsl(var(--secondary-foreground))',
+                        },
+                        destructive: {
+                            DEFAULT: 'hsl(var(--destructive))',
+                            foreground: 'hsl(var(--destructive-foreground))',
+                        },
+                        muted: {
+                            DEFAULT: 'hsl(var(--muted))',
+                            foreground: 'hsl(var(--muted-foreground))',
+                        },
+                        accent: {
+                            DEFAULT: 'hsl(var(--accent))',
+                            foreground: 'hsl(var(--accent-foreground))',
+                        },
+                        popover: {
+                            DEFAULT: 'hsl(var(--popover))',
+                            foreground: 'hsl(var(--popover-foreground))',
+                        },
+                        card: {
+                            DEFAULT: 'hsl(var(--card))',
+                            foreground: 'hsl(var(--card-foreground))',
+                        },
+                    },
+                    borderRadius: {
+                        lg: 'var(--radius)',
+                        md: 'calc(var(--radius) - 2px)',
+                        sm: 'calc(var(--radius) - 4px)',
+                    },
+                    fontFamily: {
+                        sans: ['Outfit', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    
+    <!-- Direct head theme loader to prevent theme flicker on load -->
+    <script>
+        (function() {
+            const theme = document.cookie.match(/theme=([^;]+)/)?.[1] 
+                          || localStorage.getItem('theme') 
+                          || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            if (theme === 'dark') {
+                document.documentElement.classList.add('dark');
+            } else {
+                document.documentElement.classList.remove('dark');
+            }
+        })();
+    </script>
+
+    <!-- Franken UI v2.1.2 JS core scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/franken-ui@2.1.2/dist/js/core.iife.js" type="module"></script>
+    <script src="https://cdn.jsdelivr.net/npm/franken-ui@2.1.2/dist/js/icon.iife.js" type="module"></script>
+</head>
+<body class="bg-background text-foreground h-screen overflow-hidden flex flex-col font-sans transition-colors duration-200 ease-in-out">
+
+    <!-- SHARED NAVIGATION HEADER -->
+    <header class="h-[70px] border-b border-border bg-card/10 backdrop-blur-md px-6 flex items-center justify-between z-40 flex-shrink-0">
+        <!-- Left Side: Brand Logo -->
+        <div class="flex items-center gap-3">
+            <div class="w-9 h-9 bg-primary rounded-xl flex items-center justify-center text-primary-foreground shadow-md shadow-primary/20">
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            </div>
+            <span class="text-lg font-bold tracking-tight bg-gradient-to-r from-foreground to-primary bg-clip-text text-transparent">Colaberry Logistics</span>
+        </div>
+
+        <!-- Center: Navigation Links -->
+        <nav class="hidden md:flex items-center gap-6">
+            <a href="/" class="text-sm font-semibold hover:text-primary transition-colors {% if request.url.path == '/' %}text-primary{% else %}text-muted-foreground{% endif %}">Home</a>
+            <a href="/conversations{% if active_session_id %}?session_id={{ active_session_id }}{% endif %}" class="text-sm font-semibold hover:text-primary transition-colors {% if request.url.path == '/conversations' %}text-primary{% else %}text-muted-foreground{% endif %}">Conversations</a>
+            <a href="/telemetry{% if active_session_id %}?session_id={{ active_session_id }}{% endif %}" class="text-sm font-semibold hover:text-primary transition-colors {% if request.url.path == '/telemetry' %}text-primary{% else %}text-muted-foreground{% endif %}">Telemetry</a>
+        </nav>
+
+        <!-- Right Side: Dark Mode Toggle & User profile -->
+        <div class="flex items-center gap-3">
+            <!-- Light/Dark Mode Toggle Button -->
+            <button id="theme-toggle" class="p-2 rounded-lg border border-border bg-card hover:bg-accent text-foreground transition-all duration-200" title="Toggle theme">
+                <!-- Sun icon (visible in dark mode) -->
+                <svg id="sun-icon" class="hidden dark:block w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>
+                <!-- Moon icon (visible in light mode) -->
+                <svg id="moon-icon" class="block dark:hidden w-4 h-4" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></svg>
+            </button>
+
+            <!-- Circular User Profile Dropdown Button -->
+            <div class="relative">
+                <button class="w-9 h-9 rounded-full bg-primary/10 border border-primary/30 flex items-center justify-center overflow-hidden hover:opacity-85 focus:outline-none transition-opacity" type="button" id="profile-dropdown-btn">
+                    {% if user.picture_url %}
+                    <img src="{{ user.picture_url }}" alt="Profile" class="w-full h-full object-cover">
+                    {% else %}
+                    <span class="font-bold text-sm text-primary">{{ user.name[0] | upper if user.name else 'U' }}</span>
+                    {% endif %}
+                </button>
+                
+                <!-- Dropdown Card -->
+                <div class="absolute right-0 mt-2 w-64 bg-card border border-border rounded-xl shadow-xl p-4 hidden z-50 transition-all" id="profile-dropdown-menu">
+                    <!-- User Profile Overview -->
+                    <div class="flex items-center gap-3 pb-3 border-b border-border/80 mb-3">
+                        {% if user.picture_url %}
+                        <img src="{{ user.picture_url }}" alt="Profile" class="w-10 h-10 rounded-full border border-border object-cover">
+                        {% else %}
+                        <div class="w-10 h-10 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center font-bold text-sm text-primary">
+                            {{ user.name[0] | upper if user.name else 'U' }}
+                        </div>
+                        {% endif %}
+                        <div class="flex flex-col overflow-hidden">
+                            <span class="text-sm font-semibold text-foreground truncate">{{ user.name or 'User' }}</span>
+                            <span class="text-xs text-muted-foreground truncate">{{ user.email }}</span>
+                        </div>
+                    </div>
+                    
+                    <!-- Menu Links -->
+                    <ul class="space-y-1 text-sm text-muted-foreground">
+                        <li>
+                            <a href="/profile" class="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-muted hover:text-foreground transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+                                View Profile Page
+                            </a>
+                        </li>
+                        <li>
+                            <a href="/login" class="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg hover:bg-muted hover:text-foreground transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M22 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>
+                                Switch Account
+                            </a>
+                        </li>
+                        <li class="border-t border-border/60 my-2"></li>
+                        <li>
+                            <a href="/logout" class="flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-destructive hover:bg-destructive/10 hover:text-destructive transition-all">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                                Sign Out
+                            </a>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- CONTENT WRAPPER -->
+    <div class="flex-grow overflow-hidden relative">
+        {% block content %}{% endblock %}
+    </div>
+
+    <!-- Script for Navigation Dropdown & Theme Controller -->
+    <script>
+        // Profile Dropdown Toggle
+        const profileDropdownBtn = document.getElementById('profile-dropdown-btn');
+        const profileDropdownMenu = document.getElementById('profile-dropdown-menu');
+        
+        if (profileDropdownBtn && profileDropdownMenu) {
+            profileDropdownBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                profileDropdownMenu.classList.toggle('hidden');
+            });
+            
+            document.addEventListener('click', (e) => {
+                if (!profileDropdownMenu.classList.contains('hidden') && !profileDropdownMenu.contains(e.target)) {
+                    profileDropdownMenu.classList.add('hidden');
+                }
+            });
+        }
+
+        // Dark/Light theme switching handler with Cookie + LocalStorage synchronization
+        const themeToggleBtn = document.getElementById('theme-toggle');
+        if (themeToggleBtn) {
+            themeToggleBtn.addEventListener('click', () => {
+                const isDark = document.documentElement.classList.contains('dark');
+                const newTheme = isDark ? 'light' : 'dark';
+                
+                if (newTheme === 'dark') {
+                    document.documentElement.classList.add('dark');
+                } else {
+                    document.documentElement.classList.remove('dark');
+                }
+                
+                localStorage.setItem('theme', newTheme);
+                document.cookie = `theme=${newTheme}; path=/; max-age=31536000; SameSite=Lax`;
+            });
+        }
+    </script>
+</body>
+</html>

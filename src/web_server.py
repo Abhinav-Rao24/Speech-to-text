@@ -107,16 +107,30 @@ async def logout(request: Request):
 
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request, session_id: str = None):
-    """Renders the main logistics assistant dashboard."""
+    """Renders the landing home dashboard page."""
     user = request.session.get("user")
     if not user:
-        # Redirect to login route if unauthenticated
         return RedirectResponse(url="/login")
     
-    # Read theme class from cookies (defaulting to 'dark' for smooth hybrid rendering)
     theme_class = request.cookies.get("theme", "dark")
+    return templates.TemplateResponse(
+        request=request,
+        name="home.html",
+        context={
+            "user": user,
+            "theme_class": theme_class,
+            "active_session_id": session_id
+        }
+    )
+
+@app.get("/conversations", response_class=HTMLResponse)
+async def conversations(request: Request, session_id: str = None):
+    """Renders the logistics conversation dashboard panel."""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
     
-    # Fetch all user active chat sessions
+    theme_class = request.cookies.get("theme", "dark")
     sessions = database.get_user_sessions(user["id"])
     
     active_session = None
@@ -124,7 +138,6 @@ async def root(request: Request, session_id: str = None):
     
     if session_id:
         active_session = database.get_session(session_id)
-        # Security/isolation: Ensure the session is owned by current user
         if active_session and active_session["user_id"] == user["id"]:
             messages = database.get_session_messages(session_id)
         else:
@@ -133,7 +146,7 @@ async def root(request: Request, session_id: str = None):
             
     return templates.TemplateResponse(
         request=request,
-        name="index.html",
+        name="conversations.html",
         context={
             "user": user,
             "sessions": sessions,
@@ -141,6 +154,53 @@ async def root(request: Request, session_id: str = None):
             "messages": messages,
             "active_session_id": session_id,
             "theme_class": theme_class
+        }
+    )
+
+@app.get("/telemetry", response_class=HTMLResponse)
+async def telemetry(request: Request, session_id: str = None):
+    """Renders the pipeline latency diagnostics dashboard."""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
+    
+    theme_class = request.cookies.get("theme", "dark")
+    sessions = database.get_user_sessions(user["id"])
+    
+    active_session = None
+    if session_id:
+        active_session = database.get_session(session_id)
+        if not active_session or active_session["user_id"] != user["id"]:
+            active_session = None
+            session_id = None
+            
+    return templates.TemplateResponse(
+        request=request,
+        name="telemetry.html",
+        context={
+            "user": user,
+            "sessions": sessions,
+            "active_session": active_session,
+            "active_session_id": session_id,
+            "theme_class": theme_class
+        }
+    )
+
+@app.get("/profile", response_class=HTMLResponse)
+async def profile(request: Request, session_id: str = None):
+    """Renders the user account details page."""
+    user = request.session.get("user")
+    if not user:
+        return RedirectResponse(url="/login")
+        
+    theme_class = request.cookies.get("theme", "dark")
+    return templates.TemplateResponse(
+        request=request,
+        name="profile.html",
+        context={
+            "user": user,
+            "theme_class": theme_class,
+            "active_session_id": session_id
         }
     )
 
@@ -167,7 +227,7 @@ async def create_new_session(request: Request, name: str = Form("New Chat")):
         pickup_date=manager.slots["pickup_date"]
     )
     
-    return RedirectResponse(url=f"/?session_id={session_id}", status_code=303)
+    return RedirectResponse(url=f"/conversations?session_id={session_id}", status_code=303)
 
 @app.post("/session/delete/{session_id}")
 async def delete_chat_session(request: Request, session_id: str):
@@ -181,7 +241,7 @@ async def delete_chat_session(request: Request, session_id: str):
     if session and session["user_id"] == user["id"]:
         database.delete_session(session_id)
         
-    return RedirectResponse(url="/", status_code=303)
+    return RedirectResponse(url="/conversations", status_code=303)
 
 @app.post("/session/{session_id}/message")
 async def send_chat_message(request: Request, session_id: str, text: str = Form(...)):
@@ -195,7 +255,7 @@ async def send_chat_message(request: Request, session_id: str, text: str = Form(
         raise HTTPException(status_code=403, detail="Forbidden")
     
     if not text.strip():
-        return RedirectResponse(url=f"/?session_id={session_id}", status_code=303)
+        return RedirectResponse(url=f"/conversations?session_id={session_id}", status_code=303)
         
     # 1. Save user's incoming message
     database.save_message(session_id, "user", text.strip())
@@ -243,4 +303,4 @@ async def send_chat_message(request: Request, session_id: str, text: str = Form(
         conn.commit()
         conn.close()
         
-    return RedirectResponse(url=f"/?session_id={session_id}", status_code=303)
+    return RedirectResponse(url=f"/conversations?session_id={session_id}", status_code=303)

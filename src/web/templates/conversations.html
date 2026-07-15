@@ -1,0 +1,267 @@
+{% extends "base.html" %}
+
+{% block title %}Conversations - Colaberry Logistics Voice Assistant{% endblock %}
+
+{% block content %}
+<div class="h-full flex overflow-hidden w-full relative bg-background">
+
+    <!-- COLLAPSIBLE SIDEBAR (Column 1) -->
+    <aside id="sidebar-container" class="w-[280px] opacity-100 h-full border-r border-border bg-card flex flex-col justify-between flex-shrink-0 transition-all duration-300 ease-in-out overflow-hidden z-10">
+        <div class="flex flex-col h-full overflow-hidden">
+            <!-- Sidebar controls -->
+            <div class="p-4 border-b border-border">
+                <form action="/session" method="post">
+                    <button type="submit" class="w-full flex items-center justify-center gap-2 py-2.5 px-4 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold rounded-lg shadow-sm hover:shadow transition-all duration-200">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        New Chat
+                    </button>
+                </form>
+            </div>
+
+            <!-- Scrollable chat items list -->
+            <div class="flex-grow overflow-y-auto p-2 space-y-1">
+                {% for session in sessions %}
+                <div class="group flex items-center justify-between rounded-lg p-2 transition-all duration-150 {% if session.session_id == active_session_id %}bg-primary/10 border border-primary/20{% else %}hover:bg-muted border border-transparent{% endif %}">
+                    <a href="/conversations?session_id={{ session.session_id }}" class="flex items-center gap-3 overflow-hidden w-full text-foreground hover:no-underline">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="text-muted-foreground flex-shrink-0"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                        <span class="text-sm font-medium truncate" title="{{ session.name }}">{{ session.name }}</span>
+                    </a>
+                    <form action="/session/delete/{{ session.session_id }}" method="post" class="inline">
+                        <button type="submit" class="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive p-1 rounded hover:bg-destructive/10 transition-opacity duration-150" title="Delete conversation">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                        </button>
+                    </form>
+                </div>
+                {% else %}
+                <div class="p-6 text-center text-xs text-muted-foreground">
+                    No active sessions. Create a new chat.
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </aside>
+
+    <!-- CHAT TIMELINE PANEL (Column 2) -->
+    <main class="flex-grow h-full flex flex-col justify-between overflow-hidden">
+        <!-- Control Header Bar -->
+        <div class="h-14 border-b border-border px-6 flex items-center justify-between bg-card/20 flex-shrink-0">
+            <div class="flex items-center gap-3">
+                <!-- Hamburger Toggle Button -->
+                <button id="toggle-sidebar-btn" class="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors" title="Toggle Sidebar">
+                    <svg class="w-5 h-5" xmlns="http://www.w3.org/2000/svg" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
+                <span class="font-semibold text-sm truncate max-w-[200px] md:max-w-xs">
+                    {{ active_session.name if active_session else "Select a conversation thread" }}
+                </span>
+            </div>
+            
+            {% if active_session %}
+            <button class="flex items-center gap-2 py-1.5 px-3 bg-primary text-primary-foreground hover:bg-primary/90 font-semibold rounded-lg text-xs shadow-sm hover:shadow transition-all duration-200" uk-toggle="target: #voice-agent-modal">
+                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                Initiate Voice Agent
+            </button>
+            {% endif %}
+        </div>
+
+        <!-- Scrollable bubble dialog container -->
+        {% if active_session_id %}
+        <div class="flex-grow overflow-y-auto p-6 space-y-6 flex flex-col" id="messages-panel">
+            {% for msg in messages %}
+            <div class="flex w-full {% if msg.sender == 'user' %}justify-end{% else %}justify-start{% endif %}">
+                <div class="max-w-[70%] rounded-xl p-4 text-sm shadow-sm border {% if msg.sender == 'user' %}bg-primary text-primary-foreground border-primary/20 rounded-br-none{% else %}bg-card text-card-foreground border-border rounded-bl-none{% endif %}">
+                    <p class="leading-relaxed">{{ msg.text }}</p>
+                    <div class="text-[10px] mt-2 opacity-65 flex items-center gap-1 {% if msg.sender == 'user' %}justify-end{% endif %}">
+                        <span>{{ 'You' if msg.sender == 'user' else 'Assistant' }}</span>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        <!-- Input Form -->
+        <div class="p-4 border-t border-border bg-card/20">
+            <form class="flex gap-2 max-w-4xl mx-auto" action="/session/{{ active_session_id }}/message" method="post" id="chat-form">
+                <input type="text" name="text" class="flex-grow bg-card border border-border text-foreground text-sm rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary/40 focus:border-primary transition-all" placeholder="Type a message or press 'Initiate Voice Agent' to speak..." required autocomplete="off">
+                <button type="submit" class="w-12 h-12 rounded-lg bg-primary text-primary-foreground hover:bg-primary/90 flex items-center justify-center shadow-sm hover:shadow transition-all duration-200">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                </button>
+            </form>
+        </div>
+        {% else %}
+        <div class="flex-grow flex flex-col items-center justify-center p-8 text-center text-muted-foreground">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-12 h-12 mb-4 text-muted-foreground/60" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+            <h3 class="font-bold text-lg text-foreground mb-1">No conversation active</h3>
+            <p class="text-sm max-w-xs">Select a previous chat from the collapsible sidebar or start a new logistics dialogue thread.</p>
+        </div>
+        {% endif %}
+    </main>
+
+</div>
+
+<!-- STATIC VOICE AGENT PORTAL OVERLAY MODAL (Franken UI / UK-Modal Target) -->
+{% if active_session_id %}
+<div id="voice-agent-modal" class="uk-modal flex items-center justify-center" uk-modal>
+    <div class="uk-modal-dialog uk-margin-auto-vertical max-w-md w-full p-8 bg-card/90 backdrop-blur-xl border border-border rounded-3xl shadow-2xl relative">
+        <!-- Close Button -->
+        <button class="uk-modal-close absolute top-5 right-5 text-muted-foreground hover:text-foreground p-1.5 rounded-full hover:bg-muted transition-all" type="button" title="Close Portal">
+            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+
+        <!-- Status Badge -->
+        <div class="flex items-center gap-2 py-1.5 px-4 bg-primary/10 border border-primary/20 text-primary rounded-full text-xs font-semibold uppercase tracking-wider mb-6 w-fit mx-auto">
+            <div class="w-2.5 h-2.5 rounded-full bg-primary animate-pulse"></div>
+            <span id="portal-status-text">Voice Agent Ready</span>
+        </div>
+
+        <!-- Canvas Placeholder -->
+        <div class="w-full mb-6">
+            <div class="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 text-left">Microphone Waveform</div>
+            <canvas id="voiceWaveCanvas" class="w-full h-24 bg-muted/40 border border-border/60 rounded-xl shadow-inner"></canvas>
+        </div>
+
+        <!-- Circular PTT Microphone Action Button -->
+        <div class="flex flex-col items-center justify-center gap-4">
+            <button id="ptt-mic-btn" class="w-20 h-20 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none" title="Push-to-Talk (Hold to speak)">
+                <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+            </button>
+            <h3 class="text-base font-bold text-foreground">Logistics voice portal</h3>
+            <p class="text-xs text-muted-foreground text-center max-w-[260px] leading-relaxed" id="portal-help-text">
+                Press and hold the button to record your speech. Release when finished.
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}
+
+<script>
+    // Scroll chat timeline to bottom
+    const messagesPanel = document.getElementById('messages-panel');
+    if (messagesPanel) {
+        messagesPanel.scrollTop = messagesPanel.scrollHeight;
+    }
+
+    // Sidebar Slide collapsible animation controller
+    const toggleSidebarBtn = document.getElementById('toggle-sidebar-btn');
+    const sidebarContainer = document.getElementById('sidebar-container');
+    
+    if (toggleSidebarBtn && sidebarContainer) {
+        toggleSidebarBtn.addEventListener('click', () => {
+            if (sidebarContainer.classList.contains('w-[280px]')) {
+                sidebarContainer.classList.remove('w-[280px]', 'opacity-100');
+                sidebarContainer.classList.add('w-0', 'opacity-0');
+            } else {
+                sidebarContainer.classList.remove('w-0', 'opacity-0');
+                sidebarContainer.classList.add('w-[280px]', 'opacity-100');
+            }
+        });
+    }
+
+    // Canvas drawing initialization for waveform placeholder
+    const canvas = document.getElementById('voiceWaveCanvas');
+    if (canvas) {
+        const ctx = canvas.getContext('2d');
+        const resizeCanvas = () => {
+            canvas.width = canvas.clientWidth * window.devicePixelRatio;
+            canvas.height = canvas.clientHeight * window.devicePixelRatio;
+            ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+        };
+        
+        // Initial setup
+        resizeCanvas();
+        
+        // Draw flat mock baseline wave
+        const drawMockBaseline = () => {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#e5e7eb';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(0, canvas.height / (2 * window.devicePixelRatio));
+            ctx.lineTo(canvas.width / window.devicePixelRatio, canvas.height / (2 * window.devicePixelRatio));
+            ctx.stroke();
+        };
+        
+        drawMockBaseline();
+    }
+
+    // Mock interactive visual states for standard PTT
+    const pttMicBtn = document.getElementById('ptt-mic-btn');
+    const statusText = document.getElementById('portal-status-text');
+    const helpText = document.getElementById('portal-help-text');
+    
+    if (pttMicBtn) {
+        const startRecord = (e) => {
+            e.preventDefault();
+            pttMicBtn.classList.remove('bg-primary');
+            pttMicBtn.classList.add('bg-red-500');
+            statusText.textContent = 'Listening...';
+            helpText.textContent = 'Recording microphone input. Release to transmit...';
+            
+            // Draw visual waves
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                let count = 0;
+                window.mockWaveInterval = setInterval(() => {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.strokeStyle = '#10b981'; // emerald green line color
+                    ctx.lineWidth = 2;
+                    ctx.beginPath();
+                    const midY = canvas.height / (2 * window.devicePixelRatio);
+                    ctx.moveTo(0, midY);
+                    
+                    const width = canvas.width / window.devicePixelRatio;
+                    for (let x = 0; x < width; x++) {
+                        const waveVal = Math.sin(x * 0.05 + count) * Math.cos(x * 0.01) * 15;
+                        ctx.lineTo(x, midY + waveVal);
+                    }
+                    ctx.stroke();
+                    count += 0.2;
+                }, 30);
+            }
+        };
+
+        const stopRecord = (e) => {
+            e.preventDefault();
+            if (pttMicBtn.classList.contains('bg-red-500')) {
+                pttMicBtn.classList.remove('bg-red-500');
+                pttMicBtn.classList.add('bg-primary');
+                statusText.textContent = 'Processing...';
+                helpText.textContent = 'Executing speech recognition & state model...';
+                
+                if (window.mockWaveInterval) {
+                    clearInterval(window.mockWaveInterval);
+                    window.mockWaveInterval = null;
+                }
+                
+                // Draw flat mock baseline wave again
+                if (canvas) {
+                    const ctx = canvas.getContext('2d');
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    ctx.strokeStyle = '#10b981';
+                    ctx.lineWidth = 1.5;
+                    ctx.beginPath();
+                    ctx.moveTo(0, canvas.height / (2 * window.devicePixelRatio));
+                    ctx.lineTo(canvas.width / window.devicePixelRatio, canvas.height / (2 * window.devicePixelRatio));
+                    ctx.stroke();
+                }
+
+                setTimeout(() => {
+                    statusText.textContent = 'Speaking...';
+                    helpText.textContent = 'Synthesizing voice playback audio...';
+                    
+                    setTimeout(() => {
+                        statusText.textContent = 'Voice Agent Ready';
+                        helpText.textContent = 'Press and hold the button to record your speech. Release when finished.';
+                    }, 2000);
+                }, 1500);
+            }
+        };
+
+        pttMicBtn.addEventListener('mousedown', startRecord);
+        pttMicBtn.addEventListener('mouseup', stopRecord);
+        pttMicBtn.addEventListener('mouseleave', stopRecord);
+
+        pttMicBtn.addEventListener('touchstart', startRecord);
+        pttMicBtn.addEventListener('touchend', stopRecord);
+    }
+</script>
+{% endblock %}
