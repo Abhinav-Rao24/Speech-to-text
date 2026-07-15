@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Colaberry Logistics Voice Assistant</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-gradient: linear-gradient(135deg, #090611 0%, #150a25 50%, #090611 100%);
+            --sidebar-bg: rgba(20, 12, 35, 0.45);
+            --card-bg: rgba(255, 255, 255, 0.03);
+            --card-hover-bg: rgba(255, 255, 255, 0.06);
+            --border-color: rgba(255, 255, 255, 0.08);
+            --accent-glow: 0 0 20px rgba(139, 92, 246, 0.4);
+            --accent-color: #8b5cf6;
+            --accent-gradient: linear-gradient(135deg, #8b5cf6 0%, #d946ef 100%);
+            --text-main: #f3f4f6;
+            --text-muted: #9ca3af;
+            --user-bubble-bg: rgba(139, 92, 246, 0.15);
+            --assistant-bubble-bg: rgba(255, 255, 255, 0.04);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex;
+            overflow: hidden;
+        }
+
+        /* Dashboard Layout */
+        .dashboard-container {
+            display: flex;
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+
+        /* Sidebar Styling */
+        .sidebar {
+            width: 320px;
+            background: var(--sidebar-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            z-index: 10;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .sidebar-header {
+            padding: 24px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .logo-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: var(--accent-gradient);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: var(--accent-glow);
+        }
+
+        .logo-text {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            background: linear-gradient(to right, #ffffff, #d946ef);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .new-chat-btn {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin: 16px 20px;
+            padding: 12px;
+            background: var(--accent-gradient);
+            border: none;
+            border-radius: 12px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+            box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+            text-decoration: none;
+        }
+
+        .new-chat-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(139, 92, 246, 0.5);
+        }
+
+        .chat-list {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 0 12px 20px 12px;
+        }
+
+        /* Scrollbar styles */
+        .chat-list::-webkit-scrollbar, .messages-panel::-webkit-scrollbar {
+            width: 5px;
+        }
+        .chat-list::-webkit-scrollbar-track, .messages-panel::-webkit-scrollbar-track {
+            background: transparent;
+        }
+        .chat-list::-webkit-scrollbar-thumb, .messages-panel::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+
+        .chat-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 14px;
+            margin-bottom: 8px;
+            border-radius: 10px;
+            background: transparent;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+            border: 1px solid transparent;
+            text-decoration: none;
+            color: inherit;
+        }
+
+        .chat-item:hover {
+            background: var(--card-hover-bg);
+            border-color: var(--border-color);
+        }
+
+        .chat-item.active {
+            background: rgba(139, 92, 246, 0.12);
+            border-color: rgba(139, 92, 246, 0.3);
+        }
+
+        .chat-item-content {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            overflow: hidden;
+            width: 80%;
+        }
+
+        .chat-item-title {
+            font-size: 0.9rem;
+            font-weight: 500;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .delete-session-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            opacity: 0;
+            transition: opacity 0.2s ease, color 0.2s ease;
+        }
+
+        .chat-item:hover .delete-session-btn {
+            opacity: 1;
+        }
+
+        .delete-session-btn:hover {
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .sidebar-footer {
+            padding: 16px;
+            border-top: 1px solid var(--border-color);
+            background: rgba(10, 6, 20, 0.4);
+        }
+
+        .profile-container {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .profile-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            overflow: hidden;
+        }
+
+        .profile-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            object-fit: cover;
+            border: 2px solid var(--accent-color);
+        }
+
+        .profile-details {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .profile-name {
+            font-size: 0.9rem;
+            font-weight: 600;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .profile-email {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .logout-btn {
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 8px;
+            transition: background-color 0.2s, color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .logout-btn:hover {
+            color: #ef4444;
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        /* Main Workspace Panel */
+        .workspace {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            background: transparent;
+            position: relative;
+        }
+
+        /* Top Navigation Header */
+        .top-navbar {
+            height: 70px;
+            padding: 0 30px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background: rgba(10, 6, 20, 0.2);
+            backdrop-filter: blur(10px);
+            z-index: 5;
+        }
+
+        .active-session-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .navbar-actions {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .initiate-btn {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            background: var(--accent-gradient);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 0 15px rgba(139, 92, 246, 0.35);
+        }
+
+        .initiate-btn:hover {
+            transform: scale(1.03);
+            box-shadow: 0 0 25px rgba(139, 92, 246, 0.55);
+        }
+
+        /* Center Content - Empty state / Intro Cards */
+        .intro-container {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            overflow-y: auto;
+            text-align: center;
+        }
+
+        .intro-title {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #ffffff 0%, #c8a2c8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .intro-subtitle {
+            font-size: 1.1rem;
+            color: var(--text-muted);
+            margin-bottom: 40px;
+            max-width: 600px;
+        }
+
+        .cards-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+            gap: 24px;
+            max-width: 900px;
+            width: 100%;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 24px;
+            text-align: left;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card:hover {
+            background: var(--card-hover-bg);
+            border-color: rgba(139, 92, 246, 0.4);
+            transform: translateY(-5px);
+        }
+
+        .card-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 12px;
+            background: rgba(139, 92, 246, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: var(--accent-color);
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .card-desc {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            line-height: 1.5;
+        }
+
+        /* Active Chat Workspace */
+        .chat-workspace {
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            height: calc(100vh - 70px);
+            position: relative;
+        }
+
+        .messages-panel {
+            flex-grow: 1;
+            overflow-y: auto;
+            padding: 30px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .message-row {
+            display: flex;
+            width: 100%;
+        }
+
+        .message-row.user {
+            justify-content: flex-end;
+        }
+
+        .message-row.assistant {
+            justify-content: flex-start;
+        }
+
+        .message-bubble {
+            max-width: 65%;
+            padding: 14px 18px;
+            border-radius: 16px;
+            font-size: 0.95rem;
+            line-height: 1.5;
+            position: relative;
+        }
+
+        .message-row.user .message-bubble {
+            background: var(--user-bubble-bg);
+            border: 1px solid rgba(139, 92, 246, 0.25);
+            border-bottom-right-radius: 4px;
+            color: #ffffff;
+        }
+
+        .message-row.assistant .message-bubble {
+            background: var(--assistant-bubble-bg);
+            border: 1px solid var(--border-color);
+            border-bottom-left-radius: 4px;
+            color: #f3f4f6;
+        }
+
+        .message-meta {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 6px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .message-row.user .message-meta {
+            justify-content: flex-end;
+        }
+
+        /* Input Form Container */
+        .input-container {
+            padding: 20px 30px;
+            background: rgba(10, 6, 20, 0.4);
+            border-top: 1px solid var(--border-color);
+        }
+
+        .chat-form {
+            display: flex;
+            gap: 12px;
+            max-width: 900px;
+            margin: 0 auto;
+            position: relative;
+        }
+
+        .chat-input {
+            flex-grow: 1;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 14px 20px;
+            color: white;
+            font-size: 0.95rem;
+            outline: none;
+            transition: all 0.2s;
+        }
+
+        .chat-input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
+            background: rgba(255, 255, 255, 0.07);
+        }
+
+        .send-btn {
+            background: var(--accent-gradient);
+            border: none;
+            border-radius: 12px;
+            width: 48px;
+            height: 48px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.2);
+        }
+
+        .send-btn:hover {
+            transform: scale(1.05);
+            box-shadow: var(--accent-glow);
+        }
+
+        /* Voice Agent Portal Overlay (Modal) */
+        .voice-portal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(8, 4, 16, 0.92);
+            backdrop-filter: blur(24px);
+            -webkit-backdrop-filter: blur(24px);
+            z-index: 100;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            transition: opacity 0.3s ease;
+        }
+
+        .portal-card {
+            width: 90%;
+            max-width: 480px;
+            padding: 40px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 28px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+        }
+
+        .close-portal-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            cursor: pointer;
+            padding: 8px;
+            border-radius: 50%;
+            transition: background-color 0.2s, color 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .close-portal-btn:hover {
+            background: rgba(255, 255, 255, 0.06);
+            color: white;
+        }
+
+        .portal-status-badge {
+            padding: 6px 16px;
+            border-radius: 20px;
+            background: rgba(139, 92, 246, 0.15);
+            border: 1px solid rgba(139, 92, 246, 0.3);
+            color: #c084fc;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-bottom: 30px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: #c084fc;
+            animation: pulse-dot 1.5s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0% { transform: scale(0.85); opacity: 0.5; }
+            50% { transform: scale(1.15); opacity: 1; }
+            100% { transform: scale(0.85); opacity: 0.5; }
+        }
+
+        .voice-visualizer {
+            width: 180px;
+            height: 180px;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 40px;
+        }
+
+        /* Pulsing voice circles */
+        .pulse-ring {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            opacity: 0.15;
+            animation: pulse-ring-anim 3s infinite cubic-bezier(0.215, 0.610, 0.355, 1);
+        }
+
+        .pulse-ring:nth-child(2) {
+            animation-delay: 1s;
+        }
+
+        .pulse-ring:nth-child(3) {
+            animation-delay: 2s;
+        }
+
+        @keyframes pulse-ring-anim {
+            0% { transform: scale(0.7); opacity: 0.4; }
+            50% { opacity: 0.15; }
+            100% { transform: scale(1.5); opacity: 0; }
+        }
+
+        .ptt-mic-btn {
+            width: 96px;
+            height: 96px;
+            border-radius: 50%;
+            background: var(--accent-gradient);
+            border: 2px solid rgba(255, 255, 255, 0.15);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            cursor: pointer;
+            box-shadow: var(--accent-glow);
+            transition: transform 0.2s, box-shadow 0.2s;
+            z-index: 2;
+        }
+
+        .ptt-mic-btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 0 30px rgba(139, 92, 246, 0.6);
+        }
+
+        .ptt-mic-btn:active {
+            transform: scale(0.95);
+        }
+
+        .ptt-mic-btn.recording {
+            background: linear-gradient(135deg, #ef4444 0%, #f43f5e 100%);
+            box-shadow: 0 0 30px rgba(239, 68, 68, 0.5);
+            animation: recording-glow 1.5s infinite alternate;
+        }
+
+        @keyframes recording-glow {
+            from { box-shadow: 0 0 15px rgba(239, 68, 68, 0.4); }
+            to { box-shadow: 0 0 35px rgba(239, 68, 68, 0.8); }
+        }
+
+        .portal-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .portal-help-text {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            max-width: 280px;
+            line-height: 1.4;
+        }
+
+        /* Custom alert message */
+        .alert-error {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+            color: #f87171;
+            padding: 10px 16px;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            margin-top: 15px;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="dashboard-container">
+        
+        <!-- SIDEBAR -->
+        <aside class="sidebar">
+            <div>
+                <div class="sidebar-header">
+                    <div class="logo-container">
+                        <div class="logo-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                        </div>
+                        <span class="logo-text">Colaberry</span>
+                    </div>
+                </div>
+
+                <!-- Create Session Form -->
+                <form action="/session" method="post">
+                    <button type="submit" class="new-chat-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        New Chat
+                    </button>
+                </form>
+
+                <!-- Scrollable Chat List -->
+                <div class="chat-list">
+                    {% for session in sessions %}
+                    <div class="chat-item {% if session.session_id == active_session_id %}active{% endif %}">
+                        <a href="/?session_id={{ session.session_id }}" class="chat-item-content">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="color: var(--text-muted); flex-shrink: 0;"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>
+                            <span class="chat-item-title" title="{{ session.name }}">{{ session.name }}</span>
+                        </a>
+                        <form action="/session/delete/{{ session.session_id }}" method="post" style="display:inline;">
+                            <button type="submit" class="delete-session-btn" title="Delete conversation">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                            </button>
+                        </form>
+                    </div>
+                    {% else %}
+                    <div style="padding: 20px; text-align: center; color: var(--text-muted); font-size: 0.85rem;">
+                        No previous chats. Click "New Chat" to begin.
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <!-- Profile and Logout -->
+            <div class="sidebar-footer">
+                <div class="profile-container">
+                    <div class="profile-info">
+                        {% if user.picture_url %}
+                        <img src="{{ user.picture_url }}" alt="Profile" class="profile-avatar">
+                        {% else %}
+                        <div class="profile-avatar" style="background: var(--accent-gradient); display: flex; align-items: center; justify-content: center; font-weight: bold; color: white;">
+                            {{ user.name[0] | upper if user.name else 'U' }}
+                        </div>
+                        {% endif %}
+                        <div class="profile-details">
+                            <span class="profile-name">{{ user.name or 'User' }}</span>
+                            <span class="profile-email">{{ user.email }}</span>
+                        </div>
+                    </div>
+                    <a href="/logout" class="logout-btn" title="Log out">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                    </a>
+                </div>
+            </div>
+        </aside>
+
+        <!-- MAIN WORKSPACE -->
+        <main class="workspace">
+            
+            <!-- Top Navbar -->
+            <header class="top-navbar">
+                <div class="active-session-title">
+                    {% if active_session %}
+                        {{ active_session.name }}
+                    {% else %}
+                        Logistics Assistant Dashboard
+                    {% endif %}
+                </div>
+                <div class="navbar-actions">
+                    {% if active_session %}
+                    <button class="initiate-btn" id="open-portal-btn">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                        Initiate Agent
+                    </button>
+                    {% endif %}
+                </div>
+            </header>
+
+            {% if active_session_id %}
+            
+            <!-- Chat Workspace -->
+            <div class="chat-workspace">
+                <!-- Conversation messages -->
+                <div class="messages-panel" id="messages-panel">
+                    {% for msg in messages %}
+                    <div class="message-row {{ msg.sender }}">
+                        <div class="message-bubble">
+                            {{ msg.text }}
+                            <div class="message-meta">
+                                <span>{{ 'You' if msg.sender == 'user' else 'Assistant' }}</span>
+                            </div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- Input box for text-based fallback -->
+                <div class="input-container">
+                    <form class="chat-form" action="/session/{{ active_session_id }}/message" method="post" id="chat-form">
+                        <input type="text" name="text" class="chat-input" placeholder="Type a message or press 'Initiate Agent' for voice support..." required autocomplete="off">
+                        <button type="submit" class="send-btn">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            {% else %}
+            
+            <!-- Center Home Content (When no session is active) -->
+            <div class="intro-container">
+                <h1 class="intro-title">Logistics Voice Assistant</h1>
+                <p class="intro-subtitle">Welcome to Colaberry's secure, automated logistics portal. Open an existing chat or create a new one in the sidebar to start interacting.</p>
+                
+                <div class="cards-grid">
+                    <div class="card">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"></path><polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline><line x1="12" y1="22.08" x2="12" y2="12"></line></svg>
+                        </div>
+                        <h3 class="card-title">Real-time Track & Trace</h3>
+                        <p class="card-desc">Query shipment locations instantly via voice or text workflows, linking with live logistic tracking systems.</p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>
+                        </div>
+                        <h3 class="card-title">Schedule Pickups</h3>
+                        <p class="card-desc">Coordinate logistics pickup events by stating locations and preferred dates. Fully automated booking agent integration.</p>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-icon">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z"></path><polyline points="12 6 12 12 16 14"></polyline></svg>
+                        </div>
+                        <h3 class="card-title">Latency Telemetry</h3>
+                        <p class="card-desc">Under-the-hood metrics detailing TTS, STT, LLM and turn-by-turn processing delays to ensure maximum efficiency.</p>
+                    </div>
+                </div>
+            </div>
+
+            {% endif %}
+            
+        </main>
+    </div>
+
+    <!-- VOICE PORTAL MODAL OVERLAY -->
+    {% if active_session_id %}
+    <div class="voice-portal-overlay" id="voice-portal">
+        <div class="portal-card">
+            <button class="close-portal-btn" id="close-portal-btn" title="Exit Voice Portal">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+            </button>
+            
+            <div class="portal-status-badge">
+                <div class="status-dot"></div>
+                <span id="portal-status-text">Voice Portal Ready</span>
+            </div>
+            
+            <div class="voice-visualizer">
+                <div class="pulse-ring" id="ring-1"></div>
+                <div class="pulse-ring" id="ring-2"></div>
+                <div class="pulse-ring" id="ring-3"></div>
+                
+                <button class="ptt-mic-btn" id="ptt-btn" title="Push-to-Talk (Click and hold)">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </button>
+            </div>
+            
+            <h2 class="portal-title">Voice Portal</h2>
+            <p class="portal-help-text" id="portal-help">Press and hold the microphone button to speak. Release to send.</p>
+            
+            <div class="alert-error" id="error-box"></div>
+        </div>
+    </div>
+    {% endif %}
+
+    <script>
+        // Scroll to the bottom of the conversation panel automatically
+        const messagesPanel = document.getElementById('messages-panel');
+        if (messagesPanel) {
+            messagesPanel.scrollTop = messagesPanel.scrollHeight;
+        }
+
+        // Voice Portal Overlay Controls
+        const openPortalBtn = document.getElementById('open-portal-btn');
+        const closePortalBtn = document.getElementById('close-portal-btn');
+        const voicePortal = document.getElementById('voice-portal');
+
+        if (openPortalBtn && voicePortal) {
+            openPortalBtn.addEventListener('click', () => {
+                voicePortal.style.display = 'flex';
+                // Trigger a slight reflow to enable opacity transition
+                setTimeout(() => {
+                    voicePortal.style.opacity = '1';
+                }, 10);
+            });
+        }
+
+        if (closePortalBtn && voicePortal) {
+            closePortalBtn.addEventListener('click', () => {
+                voicePortal.style.opacity = '0';
+                setTimeout(() => {
+                    voicePortal.style.display = 'none';
+                }, 300);
+            });
+        }
+
+        // Push-to-Talk (PTT) Simulation for Phase UI Mockup
+        const pttBtn = document.getElementById('ptt-btn');
+        const portalStatusText = document.getElementById('portal-status-text');
+        const portalHelp = document.getElementById('portal-help');
+        const ring1 = document.getElementById('ring-1');
+        const ring2 = document.getElementById('ring-2');
+        const ring3 = document.getElementById('ring-3');
+
+        if (pttBtn) {
+            // Helper to activate visual waves
+            const setVisualWaves = (active) => {
+                if (active) {
+                    ring1.style.animationPlayState = 'running';
+                    ring2.style.animationPlayState = 'running';
+                    ring3.style.animationPlayState = 'running';
+                } else {
+                    ring1.style.animationPlayState = 'paused';
+                    ring2.style.animationPlayState = 'paused';
+                    ring3.style.animationPlayState = 'paused';
+                }
+            };
+
+            // Pause animations initially
+            setVisualWaves(false);
+
+            // Simulation of PTT events
+            const startRecording = (e) => {
+                e.preventDefault();
+                pttBtn.classList.add('recording');
+                portalStatusText.textContent = 'Listening...';
+                portalHelp.textContent = 'Recording your speech in real-time. Release to submit...';
+                setVisualWaves(true);
+            };
+
+            const stopRecording = (e) => {
+                e.preventDefault();
+                if (pttBtn.classList.contains('recording')) {
+                    pttBtn.classList.remove('recording');
+                    portalStatusText.textContent = 'Processing...';
+                    portalHelp.textContent = 'Running speech recognition & agent workflow...';
+                    setVisualWaves(false);
+
+                    // Mock the completion and reload page after a brief interval for this phase
+                    setTimeout(() => {
+                        portalStatusText.textContent = 'Speaking...';
+                        portalHelp.textContent = 'Playing response audio...';
+                        
+                        setTimeout(() => {
+                            portalStatusText.textContent = 'Voice Portal Ready';
+                            portalHelp.textContent = 'Press and hold the microphone button to speak.';
+                        }, 2000);
+                    }, 1500);
+                }
+            };
+
+            // Support both Mouse and Touch interfaces
+            pttBtn.addEventListener('mousedown', startRecording);
+            pttBtn.addEventListener('mouseup', stopRecording);
+            pttBtn.addEventListener('mouseleave', stopRecording);
+
+            pttBtn.addEventListener('touchstart', startRecording);
+            pttBtn.addEventListener('touchend', stopRecording);
+        }
+    </script>
+</body>
+</html>
