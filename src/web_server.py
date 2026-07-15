@@ -38,6 +38,9 @@ oauth.register(
 # Setup templates directory
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "web", "templates"))
 
+# Mount static files directory
+app.mount("/static", StaticFiles(directory=os.path.join(os.path.dirname(__file__), "web", "static")), name="static")
+
 @app.on_event("startup")
 def startup_event():
     """Ensure database tables are initialized at app launch."""
@@ -110,6 +113,9 @@ async def root(request: Request, session_id: str = None):
         # Redirect to login route if unauthenticated
         return RedirectResponse(url="/login")
     
+    # Read theme class from cookies (defaulting to 'dark' for smooth hybrid rendering)
+    theme_class = request.cookies.get("theme", "dark")
+    
     # Fetch all user active chat sessions
     sessions = database.get_user_sessions(user["id"])
     
@@ -133,7 +139,8 @@ async def root(request: Request, session_id: str = None):
             "sessions": sessions,
             "active_session": active_session,
             "messages": messages,
-            "active_session_id": session_id
+            "active_session_id": session_id,
+            "theme_class": theme_class
         }
     )
 
