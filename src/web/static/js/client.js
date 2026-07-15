@@ -8,6 +8,7 @@ let playbackContext = null;
 let analyser = null;
 let animationFrameId = null;
 let isRecording = false;
+let isMuted = false;
 let visualizerMode = 'idle'; // 'idle', 'listening', 'speaking'
 let audioQueue = [];
 let isPlayingAudio = false;
@@ -25,6 +26,21 @@ function getPlaybackContext() {
         console.error("Failed to initialize Web Audio playback context:", e);
     }
     return playbackContext;
+}
+
+// Force the browser to unlock Web Audio by playing a tiny silent buffer
+function unlockAudioContext(ctx) {
+    if (!ctx) return;
+    try {
+        const buffer = ctx.createBuffer(1, 1, 22050);
+        const source = ctx.createBufferSource();
+        source.buffer = buffer;
+        source.connect(ctx.destination);
+        source.start(0);
+        console.log("[Audio] Silent buffer source scheduled to unlock browser autoplay context.");
+    } catch (err) {
+        console.warn("Failed to play silent context unlock buffer:", err);
+    }
 }
 
 // Convert Float32 PCM buffer to 16-bit signed PCM ArrayBuffer
@@ -50,13 +66,22 @@ function pcm16ToFloat32(arrayBuffer) {
 
 // Decodes standard file payloads (WAV/MP3) or raw binary 16-bit PCM arrays
 function decodeAudioPayload(arrayBuffer, callback) {
+    if (!arrayBuffer || arrayBuffer.byteLength < 4) {
+        console.warn("[Audio] Payload too small to parse, skipping.");
+        return;
+    }
+    
     const view = new DataView(arrayBuffer);
     let isFormatFile = false;
-    if (arrayBuffer.byteLength > 4) {
+    try {
         const magic = String.fromCharCode(view.getUint8(0), view.getUint8(1), view.getUint8(2), view.getUint8(3));
-        if (magic === 'RIFF' || magic === 'ID3\x03' || magic === 'ID3\x04' || view.getUint16(0) === 0xFFFB || view.getUint16(0) === 0xFFF3) {
+        const isMp3 = magic === 'ID3\x03' || magic === 'ID3\x04' || 
+                      (view.getUint16(0) === 0xFFFB) || (view.getUint16(0) === 0xFFF3);
+        if (magic === 'RIFF' || isMp3) {
             isFormatFile = true;
         }
+    } catch (e) {
+        console.warn("Error checking file signature, treating as raw PCM:", e);
     }
     
     const ctx = getPlaybackContext();
@@ -102,7 +127,7 @@ function playNextInQueue() {
         visualizerMode = 'idle';
         triggerVisualizer();
         
-        if (statusText) statusText.textContent = 'Status: Ready';
+        if (statusText) statusText.textContent = isMuted ? 'Status: Muted' : 'Status: Ready';
         if (pttMicBtn) {
             pttMicBtn.disabled = false;
             pttMicBtn.classList.remove('opacity-50', 'pointer-events-none');
@@ -126,7 +151,6 @@ function playNextInQueue() {
     
     triggerVisualizer();
     
-    // Unlock user mic control at chunk ends
     source.onended = () => {
         playNextInQueue();
     };
@@ -178,7 +202,7 @@ function updateVisualizer() {
     
     const centerX = canvas.width / 2;
     const centerY = canvas.height / 2;
-    const rings = [25, 45, 65, 85]; // Adjusted for smaller 200x200 canvas bounds
+    const rings = [25, 45, 65, 85]; // Adjusted for compact 200x200 canvas
     
     if (visualizerMode === 'speaking' && analyser) {
         const bufferLength = analyser.frequencyBinCount;
@@ -261,7 +285,7 @@ function startVoiceSession(sessionId) {
     socket.binaryType = 'arraybuffer';
 
     socket.onopen = () => {
-        if (statusText) statusText.textContent = 'Status: Ready';
+        if (statusText) statusText.textContent = isMuted ? 'Status: Muted' : 'Status: Ready';
         triggerVisualizer();
     };
 
@@ -297,11 +321,19 @@ function closeVoiceSession() {
     visualizerMode = 'idle';
     audioQueue = [];
     isPlayingAudio = false;
+    isRecording = false;
+    
+    const pttMicBtn = document.getElementById('ptt-mic-btn');
+    if (pttMicBtn) {
+        pttMicBtn.classList.remove('bg-red-500');
+        pttMicBtn.classList.add('bg-primary');
+    }
+    
     triggerVisualizer();
 }
 
-// Capture mic PCM stream when holding PTT button
-async function startPttRecording() {
+// Click to Speak Start Record Handler
+async function startClickSpeakRecording() {
     if (visualizerMode === 'speaking') {
         console.log("PTT locked: assistant speaking");
         return;
@@ -317,8 +349,9 @@ async function startPttRecording() {
     if (pttMicBtn) {
         pttMicBtn.classList.remove('bg-primary');
         pttMicBtn.classList.add('bg-red-500');
+        pttMicBtn.title = "Click to Stop and Send";
     }
-    if (statusText) statusText.textContent = 'Status: Listening...';
+    if (statusText) statusText.textContent = isMuted ? 'Status: Muted' : 'Status: Listening...';
 
     triggerVisualizer();
 
@@ -330,6 +363,9 @@ async function startPttRecording() {
         scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
 
         scriptProcessor.onaudioprocess = (e) => {
+            // Block streaming when muted
+            if (isMuted) return;
+            
             if (socket && socket.readyState === WebSocket.OPEN) {
                 const inputData = e.inputBuffer.getChannelData(0);
                 const int16Buffer = float32ToInt16(inputData);
@@ -342,12 +378,12 @@ async function startPttRecording() {
     } catch (err) {
         console.error("Microphone capture failed:", err);
         if (statusText) statusText.textContent = 'Status: Mic Error';
-        stopPttRecording();
+        stopClickSpeakRecording();
     }
 }
 
-// Stop mic capture and stream stop recording frame
-function stopPttRecording() {
+// Click to Speak Stop Record Handler
+function stopClickSpeakRecording() {
     if (!isRecording) return;
     isRecording = false;
     visualizerMode = 'idle';
@@ -358,6 +394,7 @@ function stopPttRecording() {
     if (pttMicBtn) {
         pttMicBtn.classList.remove('bg-red-500');
         pttMicBtn.classList.add('bg-primary');
+        pttMicBtn.title = "Click to Speak";
     }
     if (statusText) statusText.textContent = 'Status: Thinking...';
 
@@ -456,7 +493,8 @@ document.addEventListener('DOMContentLoaded', () => {
             e.preventDefault();
             
             // Unlock Web Audio context on user gesture
-            getPlaybackContext();
+            const pCtx = getPlaybackContext();
+            unlockAudioContext(pCtx);
             
             if (voicePanel.classList.contains('hidden')) {
                 voicePanel.classList.remove('hidden');
@@ -483,32 +521,66 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 3. Bind PTT button start/stop recording listeners
+    // 3. Bind click-to-speak recording toggles to central mic button
     const pttMicBtn = document.getElementById('ptt-mic-btn');
     if (pttMicBtn) {
-        const handleStart = (e) => {
+        pttMicBtn.addEventListener('click', (e) => {
             e.preventDefault();
+            
             // Unlock Web Audio context defensively
-            getPlaybackContext();
-            startPttRecording();
-        };
-        
-        const handleStop = (e) => {
+            const pCtx = getPlaybackContext();
+            unlockAudioContext(pCtx);
+            
+            if (isRecording) {
+                stopClickSpeakRecording();
+            } else {
+                startClickSpeakRecording();
+            }
+        });
+    }
+
+    // 4. Bind Mute Microphone toggle handler to mute button
+    const muteMicBtn = document.getElementById('mute-mic-btn');
+    const statusText = document.getElementById('portal-status-text');
+    
+    if (muteMicBtn) {
+        muteMicBtn.addEventListener('click', (e) => {
             e.preventDefault();
-            stopPttRecording();
-        };
-
-        pttMicBtn.addEventListener('mousedown', handleStart);
-        pttMicBtn.addEventListener('mouseup', handleStop);
-        pttMicBtn.addEventListener('mouseleave', handleStop);
-
-        pttMicBtn.addEventListener('touchstart', handleStart);
-        pttMicBtn.addEventListener('touchend', handleStop);
+            isMuted = !isMuted;
+            
+            if (isMuted) {
+                // Set active mute state styles
+                muteMicBtn.classList.remove('bg-card', 'text-muted-foreground', 'border-border');
+                muteMicBtn.classList.add('bg-red-500/20', 'border-red-500', 'text-red-500');
+                muteMicBtn.title = "Unmute Microphone";
+                
+                // Swap to crossed mic SVG icon
+                muteMicBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="mute-icon-svg"><line x1="1" y1="1" x2="23" y2="23"/><path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V5a3 3 0 0 0-5.94-.6"/><path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2a7 7 0 0 1-.11 1.23"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+                `;
+                
+                if (statusText) statusText.textContent = 'Status: Muted';
+            } else {
+                // Restore inactive styles
+                muteMicBtn.classList.remove('bg-red-500/20', 'border-red-500', 'text-red-500');
+                muteMicBtn.classList.add('bg-card', 'text-muted-foreground', 'border-border');
+                muteMicBtn.title = "Mute Microphone";
+                
+                // Swap back to normal mic icon
+                muteMicBtn.innerHTML = `
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="mute-icon-svg"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                `;
+                
+                if (statusText) {
+                    statusText.textContent = isRecording ? 'Status: Listening...' : 'Status: Ready';
+                }
+            }
+        });
     }
 
     // Expose handlers to global window scope defensively
-    window.startPttRecording = startPttRecording;
-    window.stopPttRecording = stopPttRecording;
+    window.startClickSpeakRecording = startClickSpeakRecording;
+    window.stopClickSpeakRecording = stopClickSpeakRecording;
     window.clearConversationalMemoryAJAX = clearConversationalMemoryAJAX;
     window.drawBaseline = drawBaseline;
 });

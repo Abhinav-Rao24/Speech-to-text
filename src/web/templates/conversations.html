@@ -74,16 +74,24 @@
         <div id="inline-voice-panel" class="hidden flex-shrink-0 border-b border-border bg-card/10 p-4 flex flex-col items-center justify-center transition-all duration-300">
             <div class="relative w-36 h-36 flex items-center justify-center">
                 <canvas id="voiceWaveCanvas" width="200" height="200" class="w-36 h-36 bg-transparent"></canvas>
-                <!-- Central PTT button overlaying the circular canvas -->
-                <button id="ptt-mic-btn" data-session-id="{{ active_session_id }}" class="absolute w-16 h-16 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none z-10" title="Push-to-Talk (Hold to speak)">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                <!-- Central microphone button (Click-to-Speak toggle) overlaying the canvas -->
+                <button id="ptt-mic-btn" data-session-id="{{ active_session_id }}" class="absolute w-16 h-16 rounded-full bg-primary text-primary-foreground flex items-center justify-center border-2 border-primary-foreground/20 hover:scale-105 active:scale-95 transition-all shadow-md focus:outline-none z-10" title="Click to Speak">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" id="mic-icon-svg"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
                 </button>
             </div>
             
-            <!-- Dynamic Status Badge -->
-            <div id="agentStatus" class="mt-3 flex items-center gap-2 py-1 px-3 bg-primary/10 border border-primary/20 text-primary rounded-full text-[10px] font-bold uppercase tracking-wider w-fit">
-                <div class="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
-                <span id="portal-status-text">Status: Ready</span>
+            <!-- Controls block: mute microphone and status badge -->
+            <div class="mt-3 flex items-center gap-3">
+                <!-- Mute Toggle Button -->
+                <button id="mute-mic-btn" class="flex items-center justify-center w-8 h-8 rounded-lg border border-border bg-card hover:bg-muted text-muted-foreground hover:text-foreground transition-all duration-200" title="Mute Microphone">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" id="mute-icon-svg"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" x2="12" y1="19" y2="22"/></svg>
+                </button>
+
+                <!-- Dynamic Status Badge -->
+                <div id="agentStatus" class="flex items-center gap-2 py-1 px-3 bg-primary/10 border border-primary/20 text-primary rounded-full text-[10px] font-bold uppercase tracking-wider w-fit">
+                    <div id="status-dot" class="w-2 h-2 rounded-full bg-primary animate-pulse"></div>
+                    <span id="portal-status-text">Status: Ready</span>
+                </div>
             </div>
         </div>
         {% endif %}
