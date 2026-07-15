@@ -125,14 +125,17 @@ async def root(request: Request, session_id: str = None):
             active_session = None
             session_id = None
             
-    return templates.TemplateResponse("index.html", {
-        "request": request,
-        "user": user,
-        "sessions": sessions,
-        "active_session": active_session,
-        "messages": messages,
-        "active_session_id": session_id
-    })
+    return templates.TemplateResponse(
+        request=request,
+        name="index.html",
+        context={
+            "user": user,
+            "sessions": sessions,
+            "active_session": active_session,
+            "messages": messages,
+            "active_session_id": session_id
+        }
+    )
 
 @app.post("/session")
 async def create_new_session(request: Request, name: str = Form("New Chat")):
